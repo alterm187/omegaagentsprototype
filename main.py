@@ -121,19 +121,19 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
         first_line_challenger_sys_msg = st.session_state.get("first_line_challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE))
         boss = create_agent(
             BOSS_NAME,
-            system_message=boss_sys_msg,  # Pass the loaded system message
+            BOSS_SYS_MSG_FILE,  # Pass the system message file path
             llm_config=llm_config,
             agent_type="user_proxy",
         )
         policy_guard = create_agent(
             POLICY_GUARD_NAME,
-            system_message=policy_guard_sys_msg,
+            POLICY_GUARD_SYS_MSG_FILE,
             llm_config=llm_config
         )
         first_line_challenger = create_agent(
             CHALLENGER_NAME,            
-            system_message=first_line_challenger_sys_msg,
-            llm_config=llm_config
+            CHALLENGER_SYS_MSG_FILE,
+            llm_config=llm_config,
         )
         logger.info("Agents created successfully.")
     except FileNotFoundError as e:
