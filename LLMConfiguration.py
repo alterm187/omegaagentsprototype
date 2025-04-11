@@ -1,0 +1,119 @@
+import logging
+from typing import Dict, List, Optional
+from google.oauth2 import service_account
+from google.cloud import aiplatform
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Constants for model providers
+VERTEX_AI = "vertex_ai"
+AZURE = "azure"
+ANTHROPIC = "anthropic"
+
+
+class LLMConfiguration:
+    """Generic LLM configuration class."""
+
+    def __init__(self, provider: str, model: str, **kwargs):
+        self.provider = provider
+        self.model = model
+        self.config = kwargs
+
+    def get_config(self) -> Dict:
+        """Returns the LLM configuration dictionary."""
+
+        if self.provider == VERTEX_AI:
+            return self._get_vertex_ai_config()
+        elif self.provider == AZURE:
+            return self._get_azure_config()
+        elif self.provider == ANTHROPIC:  # Add Anthropic case
+            return self._get_anthropic_config()
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
+
+    def _get_vertex_ai_config(self) -> Dict:
+        """Constructs and returns the Vertex AI configuration."""
+
+        project_id = self.config.get("project_id")
+        location = self.config.get("location")
+        credentials_dict = self.config.get("vertex_credentials")
+
+        if not all([project_id, location, credentials_dict]):
+            raise ValueError("Missing required parameters for Vertex AI: project_id, location, vertex_credentials")
+
+        # Convert credentials dictionary to proper credentials object
+        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+
+        # Initialize aiplatform with proper credentials
+        aiplatform.init(
+            project=project_id,
+            location=location,
+            credentials=credentials  # Use the credentials object instead of dict
+        )
+
+        config = {
+            "config_list": [
+                {
+                    "model": self.model,
+                    "api_type": "google",
+                    "location": location,
+                    "project_id": project_id,
+                    "retry_timeout": self.config.get("retry_timeout", 60),
+                    "max_retries": self.config.get("max_retries", 3),
+                    "api_rate_limit": self.config.get("api_rate_limit", 0.1),
+                    "credentials": credentials,  # Add credentials here as well
+                }
+            ],
+            "request_timeout": self.config.get("request_timeout", 600),
+            "cache_seed": self.config.get("cache_seed", 42),
+            "temperature": self.config.get("temperature", 0),
+            "max_tokens": self.config.get("max_tokens", 4096),
+        }
+        return config
+
+    def _get_azure_config(self) -> Dict:
+        """Constructs and returns the Azure configuration."""
+
+        required_params = ["api_key", "base_url", "api_version"]
+        if not all(param in self.config for param in required_params):
+            raise ValueError(f"Missing required parameters for Azure: {required_params}")
+
+        config = {
+            "config_list": [
+                {
+                    "model": self.model,
+                    "api_key": self.config["api_key"],
+                    "base_url": self.config["base_url"],
+                    "api_type": "azure",
+                    "api_version": self.config["api_version"],
+                    "max_tokens": self.config.get("max_tokens", 4096),
+                }
+            ],
+            "temperature": self.config.get("temperature", 0),
+        }
+        return config
+
+    def _get_anthropic_config(self) -> Dict:
+        """Constructs and returns the Anthropic configuration."""
+
+        required_params = ["api_key", "base_url"]
+        if not all(param in self.config for param in required_params):
+            raise ValueError(f"Missing required parameters for Anthropic: {required_params}")
+
+        config = {
+            "config_list": [
+                {
+                    "model": self.model,
+                    "api_key": self.config["api_key"],
+                    "api_type": "anthropic",
+                    "base_url": self.config["base_url"],
+                    "max_tokens": self.config.get("max_tokens", 4096),  # Add max_tokens if needed
+                }
+            ],
+            "request_timeout": self.config.get("request_timeout", 120),  # Use Anthropic's default timeout
+            "temperature": self.config.get("temperature", 0),
+            "api_rate_limit": self.config.get("api_rate_limit", 0.1),  # Add rate limiting if needed
+        }
+        return config
