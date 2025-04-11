@@ -131,9 +131,9 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
             llm_config=llm_config
         )
         first_line_challenger = create_agent(
-            CHALLENGER_NAME,
-            CHALLENGER_SYS_MSG_FILE,
-            llm_config
+            CHALLENGER_NAME,            
+            system_message=first_line_challenger_sys_msg,
+            llm_config=llm_config
         )
         logger.info("Agents created successfully.")
     except FileNotFoundError as e:
