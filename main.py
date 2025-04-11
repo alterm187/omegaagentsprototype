@@ -128,8 +128,7 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
         policy_guard = create_agent(
             POLICY_GUARD_NAME,
             system_message=policy_guard_sys_msg,
-
-            llm_config
+            llm_config=llm_config
         )
         first_line_challenger = create_agent(
             CHALLENGER_NAME,
