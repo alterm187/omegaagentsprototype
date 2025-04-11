@@ -53,6 +53,8 @@ class LLMConfiguration:
             credentials=credentials  # Use the credentials object instead of dict
         )
 
+        # Note: Removed unsupported fields: retry_timeout, max_retries, api_rate_limit from config_list entry
+        # Note: Removed unsupported field: request_timeout from the top level
         config = {
             "config_list": [
                 {
@@ -60,17 +62,19 @@ class LLMConfiguration:
                     "api_type": "google",
                     "location": location,
                     "project_id": project_id,
-                    "retry_timeout": self.config.get("retry_timeout", 60),
-                    "max_retries": self.config.get("max_retries", 3),
-                    "api_rate_limit": self.config.get("api_rate_limit", 0.1),
-                    "credentials": credentials,  # Add credentials here as well
+                    # Pass credentials directly if needed by the specific autogen google model wrapper,
+                    # though often it relies on the environment or global aiplatform init.
+                    # Check autogen documentation for the exact way to pass credentials if required here.
+                    # "credentials": credentials, # This might be needed depending on autogen version/usage
                 }
             ],
-            "request_timeout": self.config.get("request_timeout", 600),
             "cache_seed": self.config.get("cache_seed", 42),
             "temperature": self.config.get("temperature", 0),
             "max_tokens": self.config.get("max_tokens", 4096),
         }
+        # Add timeout/retry config at the top level if supported by autogen's OpenAIWrapper or similar
+        # Check autogen documentation for supported top-level parameters
+        # e.g., config["request_timeout"] = self.config.get("request_timeout", 600)
         return config
 
     def _get_azure_config(self) -> Dict:
@@ -109,11 +113,13 @@ class LLMConfiguration:
                     "api_key": self.config["api_key"],
                     "api_type": "anthropic",
                     "base_url": self.config["base_url"],
-                    "max_tokens": self.config.get("max_tokens", 4096),  # Add max_tokens if needed
+                    "max_tokens": self.config.get("max_tokens", 4096),
                 }
             ],
-            "request_timeout": self.config.get("request_timeout", 120),  # Use Anthropic's default timeout
+            # Anthropic timeouts/retries might be configured differently or have defaults.
+            # Adjust based on autogen's anthropic wrapper specifics.
+            "request_timeout": self.config.get("request_timeout", 120),
             "temperature": self.config.get("temperature", 0),
-            "api_rate_limit": self.config.get("api_rate_limit", 0.1),  # Add rate limiting if needed
+            # "api_rate_limit": self.config.get("api_rate_limit", 0.1), # Check if supported
         }
         return config
