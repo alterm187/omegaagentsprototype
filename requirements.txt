@@ -1,4 +1,3 @@
 streamlit
-pyautogen
-google-cloud-aiplatform
+pyautogen[gemini]
 google-auth
