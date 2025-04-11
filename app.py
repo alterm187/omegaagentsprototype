@@ -49,7 +49,7 @@ default_values = {
     "error_message": None,
     "initial_task_desc": "Describe the product or task here...",
     "initial_policy": "Provide policy content here..."
-    "policy_guard_sys_msg": _read_system_message("PolicyGuard.md"), 
+    ,"policy_guard_sys_msg": _read_system_message("PolicyGuard.md"), 
     "first_line_challenger_sys_msg": _read_system_message("FirstLineChallenger.md")
     }
 for key, value in default_values.items():
