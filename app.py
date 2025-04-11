@@ -1,10 +1,10 @@
 import streamlit as st
 import logging
 from typing import Optional, Dict, List
+import os
 import autogen # To access Agent type hint if needed
 
 # Import functions from our refactored modules
-# Ensure main.py and common_functions.py are in the Python path
 # (usually means they are in the same directory or the path is configured)
 try:
     from main import setup_chat, BOSS_NAME # Import setup function and Boss agent name
@@ -12,7 +12,8 @@ try:
         initiate_chat_task,
         run_agent_step,
         send_user_message
-    )
+    ) 
+    
 except ImportError as e:
     st.error(f"Failed to import necessary functions. Make sure main.py and common_functions.py are accessible. Error: {e}")
     st.stop() # Stop execution if imports fail
@@ -22,6 +23,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 st.set_page_config(layout="wide") # Use wider layout
+
+# Helper function to read system message from file
+def _read_system_message(file_path: str) -> str:
+    try:
+        with open(file_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        script_dir = os.path.dirname(__file__)
+        alt_path = os.path.join(script_dir, file_path)
+        with open(alt_path, "r") as f:
+            return f.read()
+
 st.title("AutoGen Group Chat Interface")
 
 # --- Session State Initialization ---
@@ -36,7 +49,9 @@ default_values = {
     "error_message": None,
     "initial_task_desc": "Describe the product or task here...",
     "initial_policy": "Provide policy content here..."
-}
+    "policy_guard_sys_msg": _read_system_message("PolicyGuard.md"), 
+    "first_line_challenger_sys_msg": _read_system_message("FirstLineChallenger.md")
+    }
 for key, value in default_values.items():
     if key not in st.session_state:
         st.session_state[key] = value
@@ -74,6 +89,30 @@ with st.sidebar:
         key="policy_input",
         disabled=st.session_state.chat_initialized or st.session_state.processing
     )
+    st.header("Agent System Messages")
+    
+    policy_guard_sys_msg = st.text_area(
+        "PolicyGuard System Message:",
+        value=st.session_state.get("policy_guard_sys_msg", ""),  # Retrieve from state or default
+        height=200,
+        key="policy_guard_sys_msg_input",
+        disabled=st.session_state.chat_initialized or st.session_state.processing,
+    )
+
+    first_line_challenger_sys_msg = st.text_area(
+        "FirstLineChallenger System Message:",
+        value=st.session_state.get("first_line_challenger_sys_msg", ""),  # Retrieve from state or default
+        height=200,
+        key="first_line_challenger_sys_msg_input",
+        disabled=st.session_state.chat_initialized or st.session_state.processing,
+    )
+    
+    if st.button("💾 Save System Messages", disabled=st.session_state.chat_initialized or st.session_state.processing, key="save_sys_msgs"):
+        with st.spinner("Saving system messages..."):
+            # Save system messages to files using tool.
+            default_api.natural_language_write_file(path="PolicyGuard.md", prompt=policy_guard_sys_msg, language="markdown")
+            default_api.natural_language_write_file(path="FirstLineChallenger.md", prompt=first_line_challenger_sys_msg, language="markdown")
+        st.success("System messages saved!")
 
     start_button_disabled = not task_desc or not policy_content or st.session_state.chat_initialized or st.session_state.processing
     if st.button("🚀 Start Chat", key="start_button", disabled=start_button_disabled):
@@ -81,7 +120,12 @@ with st.sidebar:
         st.session_state.error_message = None # Clear previous errors
         with st.spinner("Setting up agents and initiating chat..."):
             try:
-                # 1. Setup Agents and Manager
+                # Before calling setup_chat, update session state with current system messages
+                st.session_state.policy_guard_sys_msg = policy_guard_sys_msg 
+                st.session_state.first_line_challenger_sys_msg = first_line_challenger_sys_msg 
+            
+
+                # 1. Setup Agents and Manager 
                 st.session_state.manager, st.session_state.boss_agent = setup_chat() # Using defaults for now
 
                 # 2. Prepare Initial Prompt (Combine task and policy)
@@ -109,7 +153,7 @@ with st.sidebar:
             finally:
                 st.session_state.processing = False
                 st.rerun() # Rerun to update UI based on new state
-
+    
 
 # --- Main Chat Area ---
 st.header("Group Chat")

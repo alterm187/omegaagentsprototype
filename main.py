@@ -1,6 +1,6 @@
 import json
 import os
-import logging
+import logging, os
 from typing import Tuple, Optional
 
 # Import necessary components from autogen and local modules
@@ -33,6 +33,18 @@ CHALLENGER_SYS_MSG_FILE = "FirstLineChallenger.md"
 
 # Define credentials path (No longer needed for Vertex AI if using st.secrets)
 # CREDENTIALS_FILE_PATH = '../sa3.json' # Commented out or remove
+
+# Helper function to read system message from file
+def _read_system_message(file_path: str) -> str:
+    try:
+        with open(file_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        script_dir = os.path.dirname(__file__)
+        alt_path = os.path.join(script_dir, file_path)
+        with open(alt_path, "r") as f:
+            return f.read()
+
 
 def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-002") -> Tuple[GroupChatManager, UserProxyAgent]:
     """
@@ -102,21 +114,21 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
         # Ensure system message files exist - use absolute paths or ensure relative paths work from execution context
         for file_path in [BOSS_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE]:
             if not os.path.exists(file_path):
-                # Attempt relative path from script location as fallback
-                script_dir = os.path.dirname(__file__)
-                alt_path = os.path.join(script_dir, file_path)
-                if not os.path.exists(alt_path):
-                     raise FileNotFoundError(f"Agent system message file not found: {file_path} or {alt_path}")
-
+                raise FileNotFoundError(f"Agent system message file not found: {file_path}")
+        # Load system messages from Streamlit session state
+        boss_sys_msg = _read_system_message(BOSS_SYS_MSG_FILE)  # Assuming this helper exists or create it
+        policy_guard_sys_msg = st.session_state.get("policy_guard_sys_msg", _read_system_message(POLICY_GUARD_SYS_MSG_FILE))
+        first_line_challenger_sys_msg = st.session_state.get("first_line_challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE))
         boss = create_agent(
             BOSS_NAME,
-            BOSS_SYS_MSG_FILE,
-            llm_config,
-            agent_type="user_proxy"
+            system_message=boss_sys_msg,  # Pass the loaded system message
+            llm_config=llm_config,
+            agent_type="user_proxy",
         )
         policy_guard = create_agent(
             POLICY_GUARD_NAME,
-            POLICY_GUARD_SYS_MSG_FILE,
+            system_message=policy_guard_sys_msg,
+
             llm_config
         )
         first_line_challenger = create_agent(
@@ -128,6 +140,7 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
     except FileNotFoundError as e:
         logger.error(e)
         raise
+
     except ValueError as e:
         logger.error(f"Agent creation failed: {e}")
         raise
