@@ -3,6 +3,7 @@ import time # Keep import if needed elsewhere, but sleep removed from selection
 import autogen
 from autogen import AssistantAgent, UserProxyAgent, GroupChatManager, Agent, GroupChat
 from typing import List, Optional, Sequence, Tuple, Dict, Union
+import json # Import json for pretty printing dicts
 
 from LLMConfiguration import LLMConfiguration, logger # Assuming logger is correctly configured here
 
@@ -196,7 +197,7 @@ def initiate_chat_task(
     return manager.groupchat.messages, next_speaker
 
 
-# --- Agent Step Execution (No changes needed here based on discussion) ---
+# --- Agent Step Execution (WITH DIAGNOSTIC LOGGING) ---
 def run_agent_step(
     manager: GroupChatManager,
     speaker: Agent
@@ -208,106 +209,22 @@ def run_agent_step(
     new_messages = []
     next_speaker = None
     try:
+        # --- Start Diagnostics ---
+        logger.info(f"--- Running step for agent: {speaker.name} ---")
+        try:
+            # Log messages being passed to the agent
+            messages_to_send = manager.groupchat.messages
+            logger.info(f"Messages being sent to {speaker.name}.generate_reply (count: {len(messages_to_send)}):")
+            # Log the last few messages for context, avoiding overwhelming logs
+            start_index = max(0, len(messages_to_send) - 5) # Log last 5 messages
+            for i, msg in enumerate(messages_to_send[start_index:], start=start_index):
+                logger.info(f"  [{i}] {msg.get('name', 'Unknown')}: {json.dumps(msg.get('content', ''), indent=2)[:200]}...") # Log snippet
+        except Exception as log_e:
+            logger.error(f"Error during pre-generation logging: {log_e}")
+        # --- End Diagnostics ---
+
         # 1. Get reply from the current speaker
-        # generate_reply expects list of messages, sender (manager acts as sender context)
-        reply = speaker.generate_reply(messages=manager.groupchat.messages, sender=manager)
+        reply = speaker.generate_reply(messages=messages_to_send, sender=manager)
 
-        # 2. Process the reply
-        if reply is not None:
-            # Ensure reply is a dictionary for consistent processing downstream if needed
-            # Although GroupChat usually handles string replies internally when adding.
-            if isinstance(reply, str):
-                 processed_reply = {"role": "assistant", "content": reply, "name": speaker.name} # AutoGen convention
-            elif isinstance(reply, dict):
-                 processed_reply = reply
-                 # Ensure 'name' field is present if using custom selection based on it
-                 if 'name' not in processed_reply:
-                      processed_reply['name'] = speaker.name
-            else:
-                 logger.warning(f"Unexpected reply format from {speaker.name}: {type(reply)}. Converting to string.")
-                 processed_reply = {"role": "assistant", "content": str(reply), "name": speaker.name}
-
-            # Check if autogen's generate_reply or internal hooks already added the message
-            # This check might be fragile depending on AutoGen version/implementation details.
-            message_already_added = False
-            if manager.groupchat.messages and \
-               manager.groupchat.messages[-1].get("content") == processed_reply.get("content") and \
-               manager.groupchat.messages[-1].get("name") == speaker.name:
-                 message_already_added = True
-                 # If added, grab the actual dict from history to return it
-                 new_messages.append(manager.groupchat.messages[-1])
-                 logger.debug(f"Message from {speaker.name} appears added by generate_reply/hook.")
-
-            if not message_already_added:
-                 # Manually add the message if it wasn't automatically added
-                 # Note: speaker.send(message, recipient) is another way, but adds complexity here.
-                 # Directly appending to groupchat.messages is common in manual control loops.
-                 manager.groupchat.messages.append(processed_reply)
-                 new_messages.append(processed_reply)
-                 logger.debug(f"Manually added message from {speaker.name} to history.")
-
-        else:
-            # Agent generated None reply (maybe termination or error within agent)
-            logger.info(f"Agent {speaker.name} generated a None reply.")
-            # Keep new_messages empty
-
-        # 3. Determine the next speaker *after* the current agent's turn
-        # Crucially, pass the *current speaker* as the 'last_speaker' context
-        next_speaker = manager.groupchat.select_speaker(speaker, manager.groupchat)
-        logger.info(f"Step completed for {speaker.name}. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
-
-
-    except Exception as e:
-        # Log the error traceback for debugging
-        logger.error(f"Error during agent step for {speaker.name}: {e}", exc_info=True)
-        # Handle errors: Stop the chat, default to Boss, or try to recover?
-        # Defaulting to Boss allows user intervention.
-        next_speaker = next((agent for agent in manager.groupchat.agents if isinstance(agent, UserProxyAgent)), None)
-        logger.info(f"Error occurred. Defaulting next speaker to Boss: {next_speaker.name if next_speaker else 'None'}")
-        # Optionally add an error message to the chat history?
-        # error_message = {"role": "system", "content": f"Error during {speaker.name}'s turn: {e}", "name": "System"}
-        # manager.groupchat.messages.append(error_message)
-        # new_messages.append(error_message)
-
-
-    # Return only the messages generated/added *in this step* and the next speaker
-    return new_messages, next_speaker
-
-
-# --- User Message Sending (No changes needed here based on discussion) ---
-def send_user_message(
-    manager: GroupChatManager,
-    user_agent: UserProxyAgent, # Boss agent
-    user_message: str
-    ) -> Tuple[List[Dict], Optional[Agent]]:
-    """
-    Sends a message from the user (via user_agent/Boss) into the chat.
-    Returns the message added and the next speaker determined by the selection method.
-    """
-    if not user_message or not user_message.strip():
-        logger.warning("Empty user message received. Ignoring.")
-        # If the user sends empty input, don't add it, and just re-select the speaker.
-        # The last speaker was technically the Boss (UI), but the last *message* was from someone else.
-        # Re-run selection based on the state *before* the empty input attempt.
-        last_actual_speaker = manager.groupchat.agent_by_name(manager.groupchat.messages[-1]['name']) if manager.groupchat.messages else user_agent
-        next_speaker = manager.groupchat.select_speaker(last_actual_speaker, manager.groupchat)
-        return [], next_speaker # Return no new message, just the recalculated next speaker
-
-    # Construct the message dictionary
-    message_dict = {
-        "role": "user", # Role for UserProxyAgent
-        "content": user_message.strip(),
-        "name": user_agent.name # Name of the Boss agent
-    }
-
-    # Add the user's message to the chat history
-    manager.groupchat.messages.append(message_dict)
-    logger.info(f"User message from {user_agent.name} added to history.")
-
-    # Determine the next speaker *after* the user (Boss) has spoken
-    # Pass the user_agent as the 'last_speaker' context
-    next_speaker = manager.groupchat.select_speaker(user_agent, manager.groupchat)
-    logger.info(f"User message sent. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
-
-    # Return the message that was just added and the determined next speaker
-    return [message_dict], next_speaker
+        # --- Start Diagnostics ---
+        logger.info(f"Raw reply received from {speaker.name}.generate_reply:
