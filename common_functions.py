@@ -106,16 +106,11 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
             for pattern in patterns:
                 # Check if the pattern (agent name) is in the message content
                 if pattern.lower() in lower_message_content:
-                    # Avoid selecting the same speaker immediately unless specifically allowed (which it isn't by default)
-                    # Check groupchat settings `allow_repeat_speaker` if needed
-                    # We'll just add the agent if mentioned.
                     mentioned_agents.append(agent)
                     # Break inner loop once a pattern for this agent is found
                     break
 
     # Filter out the last speaker from mentioned agents if allow_repeat_speaker is False (default)
-    # Let's assume default Autogen behavior handles this implicitly or we handle it here.
-    # A simple approach: pick the first mentioned agent that wasn't the last speaker.
     next_speaker = None
     for agent in mentioned_agents:
         if agent != last_speaker:
@@ -127,8 +122,6 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
         return next_speaker
 
     # --- Default Logic ---
-    # If no agent was mentioned or only the last speaker was mentioned, default to Boss.
-    # This ensures the conversation flow returns to the user if the agents don't specify the next step.
     logger.info(f"No specific next agent mentioned (or only self-mention). Defaulting to Boss.")
     return boss_agent
 
@@ -142,7 +135,6 @@ def create_groupchat(agents: Sequence[Agent], max_round: int = 50) -> GroupChat:
          agents=list(agents),
          messages=[],
          max_round=max_round,
-         # Use the updated custom speaker selection logic
          speaker_selection_method=custom_speaker_selection,
          allow_repeat_speaker=False, # Standard setting
      )
@@ -155,7 +147,7 @@ def create_groupchat_manager(groupchat: GroupChat, llm_config: LLMConfiguration)
 
     return GroupChatManager(
         groupchat=groupchat,
-        llm_config=config, # Used for orchestrating if needed, e.g., summarizing
+        llm_config=config,
          is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE")
     )
 
@@ -171,132 +163,103 @@ def initiate_chat_task(
     Returns the initial message list and explicitly sets PolicyGuard as the next speaker.
     """
     manager.groupchat.reset() # Clear previous messages
-
-    # Construct the initial message from the Boss/User
     initial_message = {
-        "role": "user", # Consistent role for UserProxyAgent messages
+        "role": "user",
         "content": initial_prompt.strip(),
         "name": user_agent.name
     }
-    # Add the Boss's initial message to the history
     manager.groupchat.messages.append(initial_message)
     logger.info(f"Chat initiated by {user_agent.name}.")
 
-    # Explicitly find and set PolicyGuard as the first agent to respond
     policy_guard_agent = manager.groupchat.agent_by_name("PolicyGuard")
     if not policy_guard_agent:
         logger.error("PolicyGuard agent not found in groupchat! Cannot set as first speaker.")
-        # Fallback: Use the selection method to pick someone (might default back to Boss)
         next_speaker = manager.groupchat.select_speaker(user_agent, manager.groupchat)
         logger.warning(f"Falling back to default speaker selection. Next: {next_speaker.name if next_speaker else 'None'}")
     else:
         next_speaker = policy_guard_agent
         logger.info(f"Explicitly selected 'PolicyGuard' as the first agent to speak.")
 
-    # Return the history (containing only the initial message) and the determined next speaker
     return manager.groupchat.messages, next_speaker
 
 
-# --- Agent Step Execution (WITH CORRECTED DIAGNOSTIC LOGGING) ---
+# --- Agent Step Execution (FIXED double message bug) ---
 def run_agent_step(
     manager: GroupChatManager,
     speaker: Agent
     ) -> Tuple[List[Dict], Optional[Agent]]:
     """
     Runs a single step of the conversation for the given speaker.
+    Relies on autogen to add the message to history internally via generate_reply.
     Returns the new messages generated in this step and the next speaker.
     """
-    new_messages = []
+    newly_added_messages = [] # Changed variable name for clarity
     next_speaker = None
     try:
         # --- Start Pre-Generation Diagnostics ---
         logger.info(f"--- Running step for agent: {speaker.name} ---")
-        try:
-            # Log messages being passed to the agent
-            messages_to_send = manager.groupchat.messages
-            logger.info(f"Messages being sent to {speaker.name}.generate_reply (count: {len(messages_to_send)}):")
-            start_index = max(0, len(messages_to_send) - 5) # Log last 5 messages
-            for i, msg in enumerate(messages_to_send[start_index:], start=start_index):
-                 # Ensure content is serializable before logging
-                 log_content = msg.get('content', '')
-                 try:
-                     log_content_str = json.dumps(log_content, indent=2)
-                 except TypeError:
-                     log_content_str = str(log_content) # Fallback to string representation
-                 logger.info(f"  [{i}] {msg.get('name', 'Unknown')}: {log_content_str[:250]}...") # Log truncated snippet
-        except Exception as log_e:
-            logger.error(f"Error during pre-generation logging: {log_e}")
+        messages_before_reply = list(manager.groupchat.messages) # Copy current messages
+        len_before_reply = len(messages_before_reply)
+        logger.info(f"Messages history length before {speaker.name}.generate_reply: {len_before_reply}")
+        # (Optional: keep logging last few messages if needed for debugging)
+        # try: ... log messages_before_reply[-5:] ... except ...
         # --- End Pre-Generation Diagnostics ---
 
-        # 1. Get reply from the current speaker
-        reply = speaker.generate_reply(messages=messages_to_send, sender=manager)
+        # 1. Get reply from the current speaker.
+        # IMPORTANT: Assume generate_reply (or hooks called by it) modifies
+        # manager.groupchat.messages internally.
+        reply = speaker.generate_reply(messages=messages_before_reply, sender=manager)
 
         # --- Start Post-Generation Diagnostics ---
         try:
-            # Corrected logging for the raw reply
-            logger.info(f"Raw reply received from {speaker.name}.generate_reply:")
+            logger.info(f"Raw reply potentially generated by {speaker.name}.generate_reply:")
             logger.info(f"  Type: {type(reply)}")
-            log_reply_content = reply # Use a temporary variable for safety
+            log_reply_content = reply
             log_reply_content_str = ""
             try:
-                # Attempt to serialize as JSON, otherwise convert to string
                 log_reply_content_str = json.dumps(log_reply_content, indent=2)
             except TypeError:
-                 log_reply_content_str = str(log_reply_content) # Fallback
-            logger.info(f"  Content: {log_reply_content_str[:500]}...") # Log truncated snippet
+                 log_reply_content_str = str(log_reply_content)
+            logger.info(f"  Content: {log_reply_content_str[:500]}...")
         except Exception as log_e:
             logger.error(f"Error during post-generation logging: {log_e}")
         # --- End Post-Generation Diagnostics ---
 
+        # 2. Process the reply (Determine what messages were *actually* added)
+        messages_after_reply = manager.groupchat.messages
+        len_after_reply = len(messages_after_reply)
+        num_new_messages = len_after_reply - len_before_reply
+        logger.info(f"Messages history length after {speaker.name}.generate_reply: {len_after_reply} ({num_new_messages} new)")
 
-        # 2. Process the reply
-        if reply is not None:
-            if isinstance(reply, str):
-                 processed_reply = {"role": "assistant", "content": reply, "name": speaker.name}
-            elif isinstance(reply, dict):
-                 processed_reply = reply
-                 if 'name' not in processed_reply:
-                      processed_reply['name'] = speaker.name
-            else:
-                 logger.warning(f"Unexpected reply format from {speaker.name}: {type(reply)}. Converting to string.")
-                 processed_reply = {"role": "assistant", "content": str(reply), "name": speaker.name}
-
-            message_already_added = False
-            if manager.groupchat.messages and \
-               manager.groupchat.messages[-1].get("content") == processed_reply.get("content") and \
-               manager.groupchat.messages[-1].get("name") == speaker.name:
-                 message_already_added = True
-                 new_messages.append(manager.groupchat.messages[-1])
-                 logger.debug(f"Message from {speaker.name} appears added by generate_reply/hook.")
-
-            if not message_already_added:
-                 manager.groupchat.messages.append(processed_reply)
-                 new_messages.append(processed_reply)
-                 logger.debug(f"Manually added message from {speaker.name} to history.")
-
+        if num_new_messages > 0:
+            # Get the messages that were added during the generate_reply call
+            newly_added_messages = messages_after_reply[len_before_reply:]
+            logger.debug(f"Captured {num_new_messages} new message(s) added by {speaker.name}'s turn.")
+            # You could log the content of newly_added_messages here if needed
+            # for new_msg in newly_added_messages: logger.debug(f"  New Msg: {new_msg}")
+        elif reply is not None:
+             # This case might happen if generate_reply returns content but doesn't auto-add it.
+             # It's less common with standard AssistantAgent setup but possible.
+             logger.warning(f"Agent {speaker.name} generated a reply but message count didn't increase.")
+             # Decide how to handle this? Maybe manually add `reply` here if it's non-None?
+             # For now, we assume generate_reply handles adding.
+             # If issues persist, might need to add logic here to handle the 'reply' content directly.
         else:
-            # Handle the case where reply is None (potentially source of the original error)
-            logger.info(f"Agent {speaker.name} generated a None reply.")
-            # Depending on desired behavior, you might want to force the next speaker to Boss here
-            # For now, it proceeds to speaker selection based on the existing history
-
+             # Handle the case where reply is None (e.g., agent decides not to speak)
+             logger.info(f"Agent {speaker.name} generated no reply or message count didn't increase.")
 
         # 3. Determine the next speaker
         # Pass the current speaker (who just spoke) as the context for selection
         next_speaker = manager.groupchat.select_speaker(speaker, manager.groupchat)
         logger.info(f"Step completed for {speaker.name}. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
 
-
     except Exception as e:
-        # Log the full traceback if any exception occurs during the step
         logger.error(f"Error during agent step for {speaker.name}: {e}", exc_info=True)
-        # Default to Boss on error to allow user intervention
         next_speaker = next((agent for agent in manager.groupchat.agents if isinstance(agent, UserProxyAgent)), None)
         logger.info(f"Error occurred. Defaulting next speaker to Boss: {next_speaker.name if next_speaker else 'None'}")
 
-
-    # Return the messages added in this step and the next speaker
-    return new_messages, next_speaker
+    # Return ONLY the messages added in this step and the next speaker
+    return newly_added_messages, next_speaker
 
 
 # --- User Message Sending (No changes needed here based on discussion) ---
@@ -311,25 +274,19 @@ def send_user_message(
     """
     if not user_message or not user_message.strip():
         logger.warning("Empty user message received. Ignoring.")
-        # If the user sends empty input, don't add it, and just re-select the speaker.
         last_actual_speaker = manager.groupchat.agent_by_name(manager.groupchat.messages[-1]['name']) if manager.groupchat.messages else user_agent
         next_speaker = manager.groupchat.select_speaker(last_actual_speaker, manager.groupchat)
         return [], next_speaker # Return no new message, just the recalculated next speaker
 
-    # Construct the message dictionary
     message_dict = {
-        "role": "user", # Role for UserProxyAgent
+        "role": "user",
         "content": user_message.strip(),
-        "name": user_agent.name # Name of the Boss agent
+        "name": user_agent.name
     }
-
-    # Add the user's message to the chat history
     manager.groupchat.messages.append(message_dict)
     logger.info(f"User message from {user_agent.name} added to history.")
 
-    # Determine the next speaker *after* the user (Boss) has spoken
     next_speaker = manager.groupchat.select_speaker(user_agent, manager.groupchat)
     logger.info(f"User message sent. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
 
-    # Return the message that was just added and the determined next speaker
     return [message_dict], next_speaker
