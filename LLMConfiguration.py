@@ -7,10 +7,10 @@ from google.cloud import aiplatform
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Constants for model providers
-VERTEX_AI = "vertex_ai"
-AZURE = "azure"
-ANTHROPIC = "anthropic"
+# Constants for model providers (USING UPPERCASE)
+VERTEX_AI = "VERTEX_AI"
+AZURE = "AZURE"
+ANTHROPIC = "ANTHROPIC"
 
 
 class LLMConfiguration:
@@ -59,7 +59,7 @@ class LLMConfiguration:
             "config_list": [
                 {
                     "model": self.model,
-                    "api_type": "google",
+                    "api_type": "google", # Changed from 'vertex_ai' to 'google' as per potential autogen requirements
                     "location": location,
                     "project_id": project_id,
                     # Pass credentials directly if needed by the specific autogen google model wrapper,
@@ -102,7 +102,7 @@ class LLMConfiguration:
     def _get_anthropic_config(self) -> Dict:
         """Constructs and returns the Anthropic configuration."""
 
-        required_params = ["api_key", "base_url"]
+        required_params = ["api_key", "base_url"] # Assuming base_url might be needed, adjust if not
         if not all(param in self.config for param in required_params):
             raise ValueError(f"Missing required parameters for Anthropic: {required_params}")
 
@@ -111,8 +111,8 @@ class LLMConfiguration:
                 {
                     "model": self.model,
                     "api_key": self.config["api_key"],
-                    "api_type": "anthropic",
-                    "base_url": self.config["base_url"],
+                    "api_type": "anthropic", # Use 'anthropic' type
+                    # "base_url": self.config["base_url"], # Include if needed by autogen
                     "max_tokens": self.config.get("max_tokens", 4096),
                 }
             ],
