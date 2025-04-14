@@ -57,22 +57,19 @@ def display_messages(messages):
                     parts.append(item)
                 else:
                     parts.append(str(item))
-            content = "
-".join(parts)
+            content = "\n".join(parts)
         elif not isinstance(content, str):
              content = str(content) # Ensure content is a string
 
         # Simple way to distinguish user (Boss) messages - adjust if needed
         if sender_name == BOSS_NAME:
             with st.chat_message("user", avatar="🧑"): # Or use a specific Boss avatar
-                 st.markdown(f"""**{sender_name}:**
- {content}""")
+                 st.markdown(f"""**{sender_name}:**\n{content}""")
         else:
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
             if is_agent_message:
                  with st.chat_message("assistant", avatar="🤖"): # Generic AI avatar
-                      st.markdown(f"""**{sender_name}:**
-{content}""")
+                      st.markdown(f"""**{sender_name}:**\n{content}""")
             else: # Likely a system message or tool call/result
                  with st.chat_message("system", avatar="⚙️"):
                       st.markdown(f"""_{sender_name}: {content}_""") # Italicize system/tool messages
