@@ -36,14 +36,14 @@ def display_messages(messages):
             content_str = ""
             for item in content:
                  if isinstance(item, dict) and "text" in item:
-                      content_str += item["text"] + "
-" # Fixed newline
+                      content_str += f'{item["text"]}
+' # Use f-string for newline
                  elif isinstance(item, str): # Sometimes content is just a string in the list
-                      content_str += item + "
-" # Fixed newline
+                      content_str += f'{item}
+' # Use f-string for newline
                  else: # Fallback for unexpected structure
-                      content_str += str(item) + "
-" # Fixed newline
+                      content_str += f'{str(item)}
+' # Use f-string for newline
             content = content_str.strip()
         elif not isinstance(content, str):
              content = str(content) # Ensure content is a string
