@@ -183,17 +183,17 @@ def initiate_chat_task(
     return manager.groupchat.messages, next_speaker
 
 
-# --- Agent Step Execution (FIXED double message bug) ---
+# --- Agent Step Execution (FIXED message not being added) ---
 def run_agent_step(
     manager: GroupChatManager,
     speaker: Agent
     ) -> Tuple[List[Dict], Optional[Agent]]:
     """
     Runs a single step of the conversation for the given speaker.
-    Relies on autogen to add the message to history internally via generate_reply.
+    Handles cases where generate_reply returns content but doesn't update history.
     Returns the new messages generated in this step and the next speaker.
     """
-    newly_added_messages = [] # Changed variable name for clarity
+    newly_added_messages = [] # Initialize as empty list
     next_speaker = None
     try:
         # --- Start Pre-Generation Diagnostics ---
@@ -201,13 +201,9 @@ def run_agent_step(
         messages_before_reply = list(manager.groupchat.messages) # Copy current messages
         len_before_reply = len(messages_before_reply)
         logger.info(f"Messages history length before {speaker.name}.generate_reply: {len_before_reply}")
-        # (Optional: keep logging last few messages if needed for debugging)
-        # try: ... log messages_before_reply[-5:] ... except ...
         # --- End Pre-Generation Diagnostics ---
 
         # 1. Get reply from the current speaker.
-        # IMPORTANT: Assume generate_reply (or hooks called by it) modifies
-        # manager.groupchat.messages internally.
         reply = speaker.generate_reply(messages=messages_before_reply, sender=manager)
 
         # --- Start Post-Generation Diagnostics ---
@@ -225,30 +221,53 @@ def run_agent_step(
             logger.error(f"Error during post-generation logging: {log_e}")
         # --- End Post-Generation Diagnostics ---
 
-        # 2. Process the reply (Determine what messages were *actually* added)
-        messages_after_reply = manager.groupchat.messages
+        # 2. Process the reply (Check if message was added automatically or needs manual add)
+        messages_after_reply = manager.groupchat.messages # Get potentially updated list
         len_after_reply = len(messages_after_reply)
         num_new_messages = len_after_reply - len_before_reply
         logger.info(f"Messages history length after {speaker.name}.generate_reply: {len_after_reply} ({num_new_messages} new)")
 
         if num_new_messages > 0:
-            # Get the messages that were added during the generate_reply call
+            # Standard case: Agent/framework added the message(s) automatically
             newly_added_messages = messages_after_reply[len_before_reply:]
             logger.debug(f"Captured {num_new_messages} new message(s) added by {speaker.name}'s turn.")
-            # You could log the content of newly_added_messages here if needed
-            # for new_msg in newly_added_messages: logger.debug(f"  New Msg: {new_msg}")
         elif reply is not None:
-             # This case might happen if generate_reply returns content but doesn't auto-add it.
-             # It's less common with standard AssistantAgent setup but possible.
-             logger.warning(f"Agent {speaker.name} generated a reply but message count didn't increase.")
-             # Decide how to handle this? Maybe manually add `reply` here if it's non-None?
-             # For now, we assume generate_reply handles adding.
-             # If issues persist, might need to add logic here to handle the 'reply' content directly.
+            # --- Start Manual Add Logic ---
+            logger.warning(f"Agent {speaker.name} generated a reply but message count didn't increase. Attempting to manually add.")
+            reply_content = None
+            # Extract content: Prefer dict['content'], fallback to string, else error
+            if isinstance(reply, dict):
+                reply_content = reply.get("content")
+            elif isinstance(reply, str):
+                reply_content = reply
+            else:
+                logger.error(f"Agent {speaker.name} generated reply in unexpected format: {type(reply)}. Cannot add manually.")
+
+            if reply_content:
+                # Construct the message dictionary (assuming speaker is assistant)
+                manual_message = {
+                    "role": "assistant", # Use 'assistant' role for agent messages
+                    "content": reply_content,
+                    "name": speaker.name # Use the speaker's name
+                }
+                # Append to the *shared* message history
+                manager.groupchat.messages.append(manual_message)
+                newly_added_messages = [manual_message] # This is the message added in this step
+                logger.info(f"Manually added message from {speaker.name} to history.")
+                # Update lengths for consistency if needed (optional)
+                # len_after_reply = len(manager.groupchat.messages)
+                # num_new_messages = len_after_reply - len_before_reply
+            else:
+                logger.warning(f"Could not extract valid content from the reply generated by {speaker.name}. No message added.")
+                newly_added_messages = [] # Ensure it's empty if nothing was added
+            # --- End Manual Add Logic ---
         else:
              # Handle the case where reply is None (e.g., agent decides not to speak)
              logger.info(f"Agent {speaker.name} generated no reply or message count didn't increase.")
+             newly_added_messages = [] # Ensure it's empty
 
-        # 3. Determine the next speaker
+
+        # 3. Determine the next speaker (Use the potentially updated history)
         # Pass the current speaker (who just spoke) as the context for selection
         next_speaker = manager.groupchat.select_speaker(speaker, manager.groupchat)
         logger.info(f"Step completed for {speaker.name}. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
@@ -274,6 +293,7 @@ def send_user_message(
     """
     if not user_message or not user_message.strip():
         logger.warning("Empty user message received. Ignoring.")
+        # Determine last speaker based on message history or default to user_agent if history is empty
         last_actual_speaker = manager.groupchat.agent_by_name(manager.groupchat.messages[-1]['name']) if manager.groupchat.messages else user_agent
         next_speaker = manager.groupchat.select_speaker(last_actual_speaker, manager.groupchat)
         return [], next_speaker # Return no new message, just the recalculated next speaker
@@ -286,6 +306,7 @@ def send_user_message(
     manager.groupchat.messages.append(message_dict)
     logger.info(f"User message from {user_agent.name} added to history.")
 
+    # Determine next speaker after the user message
     next_speaker = manager.groupchat.select_speaker(user_agent, manager.groupchat)
     logger.info(f"User message sent. Selected next speaker: {next_speaker.name if next_speaker else 'None'}")
 
