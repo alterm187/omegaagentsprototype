@@ -33,18 +33,18 @@ def display_messages(messages):
 
         content = msg.get("content", "")
         if isinstance(content, list): # Handle complex content (e.g., tool calls)
-            content_str = ""
+            # --- Modified block --- START
+            parts = []
             for item in content:
-                 if isinstance(item, dict) and "text" in item:
-                      content_str += f'{item["text"]}
-' # Use f-string for newline
-                 elif isinstance(item, str): # Sometimes content is just a string in the list
-                      content_str += f'{item}
-' # Use f-string for newline
-                 else: # Fallback for unexpected structure
-                      content_str += f'{str(item)}
-' # Use f-string for newline
-            content = content_str.strip()
+                if isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                elif isinstance(item, str):
+                    parts.append(item)
+                else:
+                    parts.append(str(item))
+            content = "
+".join(parts) # Join parts with newline
+            # --- Modified block --- END
         elif not isinstance(content, str):
              content = str(content) # Ensure content is a string
 
