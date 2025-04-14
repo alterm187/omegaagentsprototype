@@ -51,8 +51,8 @@ def display_messages(messages):
         # Simple way to distinguish user (Boss) messages - adjust if needed
         if sender_name == BOSS_NAME:
             with st.chat_message("user", avatar="🧑‍💼"): # Or use a specific Boss avatar
-                 st.markdown(f"**{sender_name}:**
-{content}")
+                 # Use triple quotes for multi-line f-string
+                 st.markdown(f"""**{sender_name}:**\n {content}""")
         else:
             # Simple heuristic to try and identify system/tool messages vs agent messages
             # This might need refinement based on actual message structure
@@ -60,11 +60,12 @@ def display_messages(messages):
 
             if is_agent_message:
                  with st.chat_message("assistant", avatar="🤖"): # Generic AI avatar
-                      st.markdown(f"**{sender_name}:**
-{content}")
+                      # Use triple quotes for multi-line f-string
+                      st.markdown(f"""**{sender_name}:**\n{content}""")
             else: # Likely a system message or tool call/result
                  with st.chat_message("system", avatar="⚙️"):
-                      st.markdown(f"_{sender_name}: {content}_") # Italicize system/tool messages
+                      # Use triple quotes for multi-line f-string
+                      st.markdown(f"""_{sender_name}: {content}_""") # Italicize system/tool messages
 
 
 # --- Streamlit App UI ---
