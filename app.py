@@ -1,207 +1,194 @@
 import streamlit as st
 import logging
-from typing import Optional, Dict, List
-import os
-import autogen # To access Agent type hint if needed
+import traceback
+from main import (
+    initialize_chat,
+    run_agent_step,
+    send_user_message,
+    BOSS_NAME,
+    load_config,
+    config_path,
+)
+# Assuming other necessary imports are present
 
-# Import functions from our refactored modules
-# (usually means they are in the same directory or the path is configured)
-try:
-    from main import setup_chat, BOSS_NAME # Import setup function and Boss agent name
-    from common_functions import (
-        initiate_chat_task,
-        run_agent_step,
-        send_user_message
-    ) 
-    
-except ImportError as e:
-    st.error(f"Failed to import necessary functions. Make sure main.py and common_functions.py are accessible. Error: {e}")
-    st.stop() # Stop execution if imports fail
-
-# Configure logging (optional, but helpful for debugging)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-st.set_page_config(layout="wide") # Use wider layout
+# --- Constants and Configuration ---
+MAX_MESSAGES_DISPLAY = 50 # Limit messages displayed to prevent clutter
 
-# Helper function to read system message from file
-def _read_system_message(file_path: str) -> str:
+# --- Helper Functions ---
+def display_messages(messages):
+    """Displays chat messages, limiting the number shown."""
+    num_messages = len(messages)
+    start_index = max(0, num_messages - MAX_MESSAGES_DISPLAY)
+    if num_messages > MAX_MESSAGES_DISPLAY:
+        st.warning(f"Displaying last {MAX_MESSAGES_DISPLAY} of {num_messages} messages.")
+
+    # Display relevant messages
+    for i, msg in enumerate(messages[start_index:], start=start_index):
+        sender_name = msg.get("name", "System") # Use 'name' if available, else check 'role'
+        if not sender_name and "role" in msg:
+             sender_name = msg["role"].capitalize() # Fallback to role if name isn't set
+
+        content = msg.get("content", "")
+        if isinstance(content, list): # Handle complex content (e.g., tool calls)
+            content_str = ""
+            for item in content:
+                 if isinstance(item, dict) and "text" in item:
+                      content_str += item["text"] + "
+"
+                 elif isinstance(item, str): # Sometimes content is just a string in the list
+                      content_str += item + "
+"
+                 else: # Fallback for unexpected structure
+                      content_str += str(item) + "
+"
+            content = content_str.strip()
+        elif not isinstance(content, str):
+             content = str(content) # Ensure content is a string
+
+        # Simple way to distinguish user (Boss) messages - adjust if needed
+        if sender_name == BOSS_NAME:
+            with st.chat_message("user", avatar="🧑‍💼"): # Or use a specific Boss avatar
+                 st.markdown(f"**{sender_name}:**
+{content}")
+        else:
+            # Simple heuristic to try and identify system/tool messages vs agent messages
+            # This might need refinement based on actual message structure
+            is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
+
+            if is_agent_message:
+                 with st.chat_message("assistant", avatar="🤖"): # Generic AI avatar
+                      st.markdown(f"**{sender_name}:**
+{content}")
+            else: # Likely a system message or tool call/result
+                 with st.chat_message("system", avatar="⚙️"):
+                      st.markdown(f"_{sender_name}: {content}_") # Italicize system/tool messages
+
+
+# --- Streamlit App UI ---
+st.title("🤖 Multi-Agent Chat")
+
+# --- Initialization ---
+if "chat_initialized" not in st.session_state:
+    st.session_state.chat_initialized = False
+    st.session_state.processing = False # Flag to prevent multiple simultaneous runs
+    st.session_state.error_message = None
+    st.session_state.config = None
+    st.session_state.manager = None
+    st.session_state.boss_agent = None
+    st.session_state.messages = []
+    st.session_state.next_agent = None
+    st.session_state.initial_prompt = "" # Store initial prompt
+
+# --- Configuration Loading ---
+if not st.session_state.config:
     try:
-        with open(file_path, "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        script_dir = os.path.dirname(__file__)
-        alt_path = os.path.join(script_dir, file_path)
-        with open(alt_path, "r") as f:
-            return f.read()
+        st.session_state.config = load_config(config_path)
+        st.sidebar.success("Configuration loaded successfully.")
+        # Optionally display loaded config details
+        # st.sidebar.json(st.session_state.config)
+    except Exception as e:
+        st.sidebar.error(f"Failed to load configuration: {e}")
+        st.stop() # Stop execution if config fails
 
-st.title("AutoGen Group Chat Interface")
+# --- Chat Initialization Area ---
+st.sidebar.header("Start New Chat")
+initial_prompt_input = st.sidebar.text_area(
+    "Enter the initial task for the agents:",
+    height=150,
+    key="initial_prompt_input",
+    disabled=st.session_state.chat_initialized # Disable if chat already started
+)
 
-# --- Session State Initialization ---
-# Initialize keys in session state if they don't exist
-default_values = {
-    "chat_initialized": False,
-    "processing": False, # Flag to prevent double clicks
-    "manager": None,
-    "boss_agent": None,
-    "messages": [], # List to store chat history {role/name: ..., content: ...}
-    "next_agent": None, # Stores the Agent object whose turn it is
-    "error_message": None,
-    "initial_task_desc": "Describe the product or task here...",
-    "initial_policy": "Provide policy content here...",
-    "policy_guard_sys_msg": _read_system_message("PolicyGuard.md"), 
-    "first_line_challenger_sys_msg": _read_system_message("FirstLineChallenger.md")
-    }
-for key, value in default_values.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
-
-# --- Helper Function to Display Messages ---
-def display_messages(messages: List[Dict]):
-    """Displays chat messages using Streamlit's chat elements."""
-    for msg in messages:
-        role = msg.get("name", msg.get("role", "Unknown")) # Use name if available
-        content = msg.get("content", str(msg)) # Ensure content is string
-        # Handle potential complex content (like tool calls) - display simply for now
-        if not isinstance(content, str):
-            content = str(content)
-        # Use name for chat display role
-        with st.chat_message(name=role):
-            st.markdown(content) # Use markdown for potential formatting
-
-
-# --- Sidebar for Inputs and Control ---
-with st.sidebar:
-    st.header("Configuration")
-
-    # Use text_area for potentially longer inputs
-    task_desc = st.text_area(
-        "Task Description:",
-        value=st.session_state.initial_task_desc,
-        height=150,
-        key="task_input",
-        disabled=st.session_state.chat_initialized or st.session_state.processing
-    )
-    policy_content = st.text_area(
-        "Policy Content:",
-        value=st.session_state.initial_policy,
-        height=200,
-        key="policy_input",
-        disabled=st.session_state.chat_initialized or st.session_state.processing
-    )
-    st.header("Agent System Messages")
-    
-    policy_guard_sys_msg = st.text_area(
-        "PolicyGuard System Message:",
-        value=st.session_state.get("policy_guard_sys_msg", ""),  # Retrieve from state or default
-        height=200,
-        key="policy_guard_sys_msg_input",
-        disabled=st.session_state.chat_initialized or st.session_state.processing,
-    )
-
-    first_line_challenger_sys_msg = st.text_area(
-        "FirstLineChallenger System Message:",
-        value=st.session_state.get("first_line_challenger_sys_msg", ""),  # Retrieve from state or default
-        height=200,
-        key="first_line_challenger_sys_msg_input",
-        disabled=st.session_state.chat_initialized or st.session_state.processing,
-    )
-    
-    if st.button("💾 Save System Messages", disabled=st.session_state.chat_initialized or st.session_state.processing, key="save_sys_msgs"):
-        with st.spinner("Saving system messages..."):
-            # Save system messages to files using tool.
-            default_api.natural_language_write_file(path="PolicyGuard.md", prompt=policy_guard_sys_msg, language="markdown")
-            default_api.natural_language_write_file(path="FirstLineChallenger.md", prompt=first_line_challenger_sys_msg, language="markdown")
-        st.success("System messages saved!")
-
-    start_button_disabled = not task_desc or not policy_content or st.session_state.chat_initialized or st.session_state.processing
-    if st.button("🚀 Start Chat", key="start_button", disabled=start_button_disabled):
+if st.sidebar.button("🚀 Start Chat", key="start_chat", disabled=st.session_state.chat_initialized or not initial_prompt_input):
+    if not st.session_state.chat_initialized and initial_prompt_input:
+        st.session_state.initial_prompt = initial_prompt_input # Store the prompt
         st.session_state.processing = True
-        st.session_state.error_message = None # Clear previous errors
-        with st.spinner("Setting up agents and initiating chat..."):
-            try:
-                # Before calling setup_chat, update session state with current system messages
-                st.session_state.policy_guard_sys_msg = policy_guard_sys_msg 
-                st.session_state.first_line_challenger_sys_msg = first_line_challenger_sys_msg 
-            
-
-                # 1. Setup Agents and Manager 
-                st.session_state.manager, st.session_state.boss_agent = setup_chat() # Using defaults for now
-
-                # 2. Prepare Initial Prompt (Combine task and policy)
-                # How policy is injected depends on agent design. Assume PolicyGuard expects it in the initial message.
-                initial_prompt = f"**Task Description:**\n{task_desc}\n\n**Policy Content:**\n{policy_content}\n\nPlease analyze according to the policy."
-                logger.info(f"Initiating chat with prompt:\n{initial_prompt}")
-
-                # 3. Initiate Chat Task
-                initial_messages, next_agent = initiate_chat_task(
-                    st.session_state.boss_agent,
+        st.session_state.error_message = None
+        try:
+            with st.spinner("Initializing agents and starting chat..."):
+                logger.info("Initializing chat...")
+                (
                     st.session_state.manager,
-                    initial_prompt
-                )
-
-                # 4. Update State
-                st.session_state.messages = initial_messages
-                st.session_state.next_agent = next_agent
+                    st.session_state.boss_agent,
+                    st.session_state.messages,
+                    st.session_state.next_agent,
+                ) = initialize_chat(st.session_state.config, st.session_state.initial_prompt)
                 st.session_state.chat_initialized = True
-                logger.info(f"Chat initialized. First message sent. Next agent: {next_agent.name if next_agent else 'None'}")
+                logger.info(f"Chat initialized. First message sent. Next agent: {st.session_state.next_agent.name if st.session_state.next_agent else 'None'}")
+        except Exception as e:
+            logger.error(f"Error initializing chat: {traceback.format_exc()}")
+            st.session_state.error_message = f"Initialization failed: {e}"
+        finally:
+            st.session_state.processing = False
+        st.rerun() # Rerun to update UI based on new state
 
-            except (FileNotFoundError, ValueError, KeyError, ImportError, AttributeError, Exception) as e:
-                logger.error(f"Error during chat setup or initiation: {e}", exc_info=True)
-                st.session_state.error_message = f"Error: {e}"
-                st.session_state.chat_initialized = False # Ensure state reflects failure
-            finally:
-                st.session_state.processing = False
-                st.rerun() # Rerun to update UI based on new state
-    
-
-# --- Main Chat Area ---
-st.header("Group Chat")
-
-# Display Error Messages
+# --- Display Error Message ---
 if st.session_state.error_message:
     st.error(st.session_state.error_message)
 
-# Display Chat History if Initialized
-if st.session_state.chat_initialized:
-    display_messages(st.session_state.messages)
+# --- Main Chat Interaction Area ---
+chat_container = st.container() # Use a container for chat messages
 
-    # --- Interaction Controls ---
-    if st.session_state.next_agent and not st.session_state.processing:
-        next_agent_name = st.session_state.next_agent.name
+with chat_container:
+    # Display Chat History if Initialized
+    if st.session_state.chat_initialized:
+        display_messages(st.session_state.messages)
 
-        # Check if it's the User's (Boss's) turn
-        if next_agent_name == BOSS_NAME:
-            st.markdown(f"**Your turn (as {BOSS_NAME}):**")
-            user_input = st.text_input("Enter your message:", key=f"user_input_{len(st.session_state.messages)}", disabled=st.session_state.processing)
-            if st.button("✉️ Send Message", key=f"send_{len(st.session_state.messages)}", disabled=st.session_state.processing or not user_input):
-                st.session_state.processing = True
+        # --- Interaction Controls ---
+        # Check if there's a next agent and we are not currently processing a step
+        if st.session_state.next_agent and not st.session_state.processing:
+            next_agent_name = st.session_state.next_agent.name
+
+            # Check if it's the User's (Boss's) turn
+            if next_agent_name == BOSS_NAME:
+                st.markdown(f"**Your turn (as {BOSS_NAME}):**")
+                user_input = st.text_input(
+                    "Enter your message:",
+                    key=f"user_input_{len(st.session_state.messages)}", # Unique key needed
+                    disabled=st.session_state.processing # Should always be False here, but keep for safety
+                )
+                if st.button("✉️ Send Message", key=f"send_{len(st.session_state.messages)}", disabled=st.session_state.processing or not user_input):
+                    st.session_state.processing = True # Set processing BEFORE potentially long operation
+                    st.session_state.error_message = None
+                    should_rerun = False
+                    # Use spinner for feedback while sending message
+                    with st.spinner(f"Sending message as {BOSS_NAME}..."):
+                        try:
+                            logger.info(f"Sending user message: {user_input}")
+                            new_messages, next_agent = send_user_message(
+                                st.session_state.manager,
+                                st.session_state.boss_agent,
+                                user_input
+                            )
+                            st.session_state.messages.extend(new_messages)
+                            st.session_state.next_agent = next_agent
+                            logger.info(f"User message sent. Next agent: {next_agent.name if next_agent else 'None'}")
+                            should_rerun = True # Rerun after successful send to process next turn
+                        except Exception as e:
+                             logger.error(f"Error sending user message: {traceback.format_exc()}")
+                             st.session_state.error_message = f"Error sending message: {e}"
+                        # Ensure processing is set to False even if error occurs
+                        # No finally needed here as it's set *before* the rerun below
+
+                    st.session_state.processing = False # Reset processing flag
+                    if should_rerun:
+                        st.rerun() # Rerun to display new messages and process the next agent's turn
+
+            # --- Auto-run AI Agent's Turn ---
+            else:
+                # Automatically run the next AI agent's turn
+                st.markdown(f"**Running turn for:** {next_agent_name}...") # Indicate which agent is running
+                st.session_state.processing = True # Set processing flag BEFORE the operation
                 st.session_state.error_message = None
-                with st.spinner(f"Sending message as {BOSS_NAME}..."):
-                    try:
-                        new_messages, next_agent = send_user_message(
-                            st.session_state.manager,
-                            st.session_state.boss_agent,
-                            user_input
-                        )
-                        st.session_state.messages.extend(new_messages)
-                        st.session_state.next_agent = next_agent
-                        logger.info(f"User message sent. Next agent: {next_agent.name if next_agent else 'None'}")
-                    except Exception as e:
-                        logger.error(f"Error sending user message: {e}", exc_info=True)
-                        st.session_state.error_message = f"Error sending message: {e}"
-                    finally:
-                        st.session_state.processing = False
-                        st.rerun()
+                should_rerun = False
 
-        # Otherwise, it's an AI Agent's turn
-        else:
-            st.markdown(f"**Next turn:** {next_agent_name}")
-            if st.button(f"▶️ Run {next_agent_name}'s Turn", key=f"run_agent_{len(st.session_state.messages)}", disabled=st.session_state.processing):
-                st.session_state.processing = True
-                st.session_state.error_message = None
+                # Use spinner for visual feedback during processing
                 with st.spinner(f"Running {next_agent_name}'s turn..."):
                     try:
+                        logger.info(f"Running step for agent: {next_agent_name}")
                         new_messages, next_agent = run_agent_step(
                             st.session_state.manager,
                             st.session_state.next_agent # Pass the actual agent object
@@ -209,34 +196,42 @@ if st.session_state.chat_initialized:
                         st.session_state.messages.extend(new_messages)
                         st.session_state.next_agent = next_agent
                         logger.info(f"Agent {next_agent_name} finished. Next agent: {next_agent.name if next_agent else 'None'}")
-
-                        # Check for termination message from the last agent
-                        if new_messages and new_messages[-1].get("content", "").rstrip().endswith("TERMINATE"):
-                             st.info(f"Agent {next_agent_name} terminated the chat.")
-                             st.session_state.next_agent = None # Stop processing
-
+                        should_rerun = True # Rerun after successful step
                     except Exception as e:
-                        logger.error(f"Error running agent step for {next_agent_name}: {e}", exc_info=True)
+                        logger.error(f"Error during {next_agent_name}'s turn: {traceback.format_exc()}")
                         st.session_state.error_message = f"Error during {next_agent_name}'s turn: {e}"
-                        # Decide if chat should stop on error, maybe set next_agent to None or Boss
-                        st.session_state.next_agent = st.session_state.boss_agent # Allow user intervention on error?
-                    finally:
-                        st.session_state.processing = False
-                        st.rerun()
+                        # Stop the process on error by setting next_agent to None
+                        st.session_state.next_agent = None
+                        should_rerun = True # Rerun even on error to display the error message
 
-    elif not st.session_state.next_agent and st.session_state.chat_initialized:
-        # Chat has ended (either normally via TERMINATE or potentially an error)
-        st.success("Chat has concluded or the next speaker could not be determined.")
-        # Optionally add a button to reset/start a new chat
-        if st.button("🔄 Start New Chat"):
-             # Reset relevant state variables
-             for key in default_values:
-                  st.session_state[key] = default_values[key]
-             # Need to also clear the input widgets if using 'key'
-             st.session_state.task_input = default_values["initial_task_desc"]
-             st.session_state.policy_input = default_values["initial_policy"]
-             st.rerun()
+                st.session_state.processing = False # Reset processing flag
+
+                if should_rerun:
+                     # Use st.rerun() to immediately trigger the next step check or display error
+                     st.rerun()
 
 
-elif not st.session_state.chat_initialized and not st.session_state.error_message:
-    st.info("Please provide the Task Description and Policy Content in the sidebar, then click 'Start Chat'.")
+        elif not st.session_state.next_agent and st.session_state.chat_initialized and not st.session_state.processing:
+             # Displayed when the conversation is finished (next_agent is None)
+             st.success("Chat finished.")
+        # Note: If st.session_state.processing is True, this block is skipped, preventing
+        # multiple triggers while an agent step or user send is in progress. The st.rerun()
+        # call after processing ensures the UI updates and re-evaluates the state.
+
+# Add a clear chat button or other controls as needed
+if st.session_state.chat_initialized:
+     if st.sidebar.button("Clear Chat History", key="clear_chat"):
+         # Reset relevant state variables
+         st.session_state.chat_initialized = False
+         st.session_state.processing = False
+         st.session_state.error_message = None
+         # Keep config loaded
+         st.session_state.manager = None
+         st.session_state.boss_agent = None
+         st.session_state.messages = []
+         st.session_state.next_agent = None
+         st.session_state.initial_prompt = ""
+         # Clear UI elements associated with keys that might persist otherwise
+         # (e.g., text inputs - though rerun should handle this)
+         logger.info("Chat history cleared.")
+         st.rerun()
