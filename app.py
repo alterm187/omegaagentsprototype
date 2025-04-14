@@ -33,7 +33,7 @@ def display_messages(messages):
 
         content = msg.get("content", "")
         if isinstance(content, list): # Handle complex content (e.g., tool calls)
-            # --- Modified block --- START
+            # --- Corrected block --- START
             parts = []
             for item in content:
                 if isinstance(item, dict) and "text" in item:
@@ -42,9 +42,9 @@ def display_messages(messages):
                     parts.append(item)
                 else:
                     parts.append(str(item))
-            content = "
-".join(parts) # Join parts with newline
-            # --- Modified block --- END
+            # Ensure this join happens on a single line
+            content = "\n".join(parts)
+            # --- Corrected block --- END
         elif not isinstance(content, str):
              content = str(content) # Ensure content is a string
 
