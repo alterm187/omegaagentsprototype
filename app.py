@@ -3,11 +3,11 @@ import logging
 import traceback
 import os
 import json
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 
 # Import AutoGen components directly in app.py
 import autogen
-from autogen import UserProxyAgent, GroupChatManager, GroupChat
+from autogen import UserProxyAgent, GroupChatManager, GroupChat, Agent
 
 # Import necessary components from local modules
 from LLMConfiguration import LLMConfiguration, VERTEX_AI, AZURE, ANTHROPIC
@@ -17,14 +17,16 @@ from common_functions import (
     create_groupchat_manager, # Still needed
     initiate_chat_task, # Import from common_functions
     run_agent_step,     # Import from common_functions
-    send_user_message   # Import from common_functions
+    send_user_message,   # Import from common_functions
+    read_system_message # Now needed in app.py
 )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Constants (Moved from main.py) ---
+# --- Constants ---
+
 BOSS_NAME = "Boss"
 POLICY_GUARD_NAME = "PolicyGuard"
 CHALLENGER_NAME = "FirstLineChallenger"
@@ -40,47 +42,62 @@ MAX_MESSAGES_DISPLAY = 50 # Limit messages displayed to prevent clutter
 POLICY_TEXT_KEY = "policy_text_input" # Key for the policy text area
 TASK_PROMPT_KEY = "initial_prompt_input" # Key for the task description area
 
-# --- Helper Functions (Moved/Adapted from main.py and app.py) ---
+# Keys for editable system messages
+POLICY_GUARD_EDIT_KEY = "policy_guard_editable_prompt"
+CHALLENGER_EDIT_KEY = "challenger_editable_prompt"
+BOSS_EDIT_KEY = "boss_editable_prompt"
+
+AGENT_CONFIG = {
+    POLICY_GUARD_NAME: {"file": POLICY_GUARD_SYS_MSG_FILE, "key": POLICY_GUARD_EDIT_KEY},
+    CHALLENGER_NAME: {"file": CHALLENGER_SYS_MSG_FILE, "key": CHALLENGER_EDIT_KEY},
+    BOSS_NAME: {"file": BOSS_SYS_MSG_FILE, "key": BOSS_EDIT_KEY},
+}
+
+# --- Helper Functions ---
 
 def _read_system_message(file_path: str) -> str:
-    """Reads system message from a file, trying relative path first, then script directory."""
+    """Reads system message from a file, using the function from common_functions."""
     try:
-        # Try relative path first
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
+        # Try relative path first (common_functions handles this)
+        return read_system_message(file_path)
     except FileNotFoundError:
-        try:
-            # Try path relative to the script directory as a fallback
-            script_dir = os.path.dirname(__file__)
-            alt_path = os.path.join(script_dir, file_path)
-            with open(alt_path, "r", encoding="utf-8") as f:
-                logger.warning(f"Could not find {file_path} directly, reading from {alt_path}")
-                return f.read()
-        except FileNotFoundError:
-             logger.error(f"System message file not found at {file_path} or {alt_path}")
-             raise FileNotFoundError(f"Agent system message file not found: {file_path}")
-        except Exception as e:
-             logger.error(f"Error reading system message file {file_path} (or alt): {e}", exc_info=True)
-             raise # Re-raise other errors
+         logger.error(f"System message file not found: {file_path}")
+         raise
+    except Exception as e:
+         logger.error(f"Error reading system message file {file_path}: {e}", exc_info=True)
+         raise # Re-raise other errors
+
+def initialize_editable_prompts():
+    """Loads default agent prompts into session state if they don't exist."""
+    for agent_name, config in AGENT_CONFIG.items():
+        if config["key"] not in st.session_state:
+            try:
+                st.session_state[config["key"]] = _read_system_message(config["file"])
+                logger.info(f"Loaded default system message for {agent_name} into session state ({config['key']}).")
+            except Exception as e:
+                st.session_state[config["key"]] = f"Error loading default from {config['file']}: {e}"
+                logger.error(f"Failed to load initial prompt for {agent_name} from {config['file']}: {e}")
 
 def setup_chat(
     llm_provider: str = VERTEX_AI,
     model_name: str = "gemini-1.5-pro-002",
-    policy_text: Optional[str] = None
+    policy_text: Optional[str] = None,
+    agent_prompts: Dict[str, str] = {} # Dict mapping agent name to system prompt content
     ) -> Tuple[GroupChatManager, UserProxyAgent]:
     """
     Sets up the agents, group chat, and manager based on selected LLM provider.
+    Uses provided agent prompts from session state.
     Injects provided policy_text into PolicyGuard's system message.
     Reads Vertex AI credentials from st.secrets.
-    (Function moved from main.py to app.py)
     """
     logger.info(f"Setting up chat with provider: {llm_provider}, model: {model_name}")
     if policy_text:
         logger.info("Policy text provided, will inject into PolicyGuard.")
     else:
-        logger.info("No policy text provided, PolicyGuard will use default from file.")
+        logger.info("No policy text provided, PolicyGuard will use prompt from session state.")
 
     # --- LLM Configuration ---
+
     if llm_provider == VERTEX_AI:
         try:
             if "gcp_credentials" not in st.secrets:
@@ -110,54 +127,55 @@ def setup_chat(
     if not llm_config.get_config():
         raise ValueError("Failed to create a valid LLM configuration object or dictionary.")
 
-    # --- Agent Creation ---
+    # --- Agent Creation (Using Session State Prompts) ---
+
     try:
-        for file_path in [BOSS_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE]:
-             _read_system_message(file_path) # Check if files are readable early
+        agents = {}
+        for agent_name, config in AGENT_CONFIG.items():
+            system_message_content = agent_prompts.get(agent_name)
+            if not system_message_content:
+                 logger.error(f"Missing system message content for agent {agent_name} in setup_chat call.")
+                 # Fallback to reading file again as a safety measure, though it shouldn't happen if initialized correctly
+                 try:
+                     system_message_content = _read_system_message(config["file"])
+                     logger.warning(f"Had to re-read {config['file']} for {agent_name} during setup.")
+                 except Exception as e:
+                     raise ValueError(f"Could not load system message for {agent_name}: {e}")
 
-        boss = create_agent(
-            name=BOSS_NAME,
-            llm_config=llm_config,
-            system_message_file=BOSS_SYS_MSG_FILE,
-            agent_type="user_proxy",
-        )
-
-        base_policy_guard_sys_msg = _read_system_message(POLICY_GUARD_SYS_MSG_FILE)
-        policy_guard_final_sys_msg = base_policy_guard_sys_msg
-        if policy_text and policy_text.strip():
-            if POLICY_INJECTION_MARKER in base_policy_guard_sys_msg:
-                policy_guard_final_sys_msg = base_policy_guard_sys_msg.replace(
-                    POLICY_INJECTION_MARKER,
-                    f"""{POLICY_INJECTION_MARKER}
+            # Inject policy into PolicyGuard's message
+            if agent_name == POLICY_GUARD_NAME and policy_text and policy_text.strip():
+                 base_policy_guard_sys_msg = system_message_content # Start with the editable content
+                 if POLICY_INJECTION_MARKER in base_policy_guard_sys_msg:
+                     system_message_content = base_policy_guard_sys_msg.replace(
+                         POLICY_INJECTION_MARKER,
+                         f"""{POLICY_INJECTION_MARKER}
 
 {policy_text.strip()}""",
-                    1
-                )
-                logger.info(f"Injected policy text into PolicyGuard system message under '{POLICY_INJECTION_MARKER}'.")
-            else:
-                logger.warning(f"Policy injection marker '{POLICY_INJECTION_MARKER}' not found in {POLICY_GUARD_SYS_MSG_FILE}. Appending policy text instead.")
-                policy_guard_final_sys_msg += f"""
+                         1
+                     )
+                     logger.info(f"Injected policy text into editable PolicyGuard system message under '{POLICY_INJECTION_MARKER}'.")
+                 else:
+                     logger.warning(f"Policy injection marker '{POLICY_INJECTION_MARKER}' not found in editable PolicyGuard prompt. Appending policy text instead.")
+                     system_message_content += f"""
 
 ## Policies
 
 {policy_text.strip()}"""
-        else:
-             logger.info(f"Using default system message for PolicyGuard from {POLICY_GUARD_SYS_MSG_FILE}.")
 
-        policy_guard = create_agent(
-            name=POLICY_GUARD_NAME,
-            llm_config=llm_config,
-            system_message_content=policy_guard_final_sys_msg,
-            system_message_file=None
-        )
+            agent_type = "user_proxy" if agent_name == BOSS_NAME else "assistant"
+            agents[agent_name] = create_agent(
+                name=agent_name,
+                llm_config=llm_config,
+                system_message_content=system_message_content, # Pass the content directly
+                system_message_file=None, # Ensure file path is not used
+                agent_type=agent_type,
+            )
 
-        first_line_challenger = create_agent(
-            name=CHALLENGER_NAME,
-            llm_config=llm_config,
-            system_message_file=CHALLENGER_SYS_MSG_FILE,
-        )
+        boss = agents[BOSS_NAME]
+        policy_guard = agents[POLICY_GUARD_NAME]
+        first_line_challenger = agents[CHALLENGER_NAME]
 
-        logger.info("Agents created successfully.")
+        logger.info("Agents created successfully using session state prompts.")
     except FileNotFoundError as e:
         logger.error(e)
         raise
@@ -169,6 +187,7 @@ def setup_chat(
         raise
 
     # --- Group Chat Setup ---
+
     policy_team = [boss, policy_guard, first_line_challenger]
     try:
         groupchat = create_groupchat(policy_team, max_round=50)
@@ -222,7 +241,7 @@ def display_messages(messages):
              content = str(content)
 
         if sender_name == BOSS_NAME:
-            with st.chat_message("user", avatar="🧑"):
+            with st.chat_message("ProductLead", avatar="🧑"):
                  st.markdown(f"""**{sender_name}:**\n{content}""")
         else:
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
@@ -244,9 +263,11 @@ def load_config(path):
 config_path = "config.json" # Example placeholder path
 
 # --- Streamlit App UI ---
-st.title("🤖 Risk Management Challenge Session")
+
+st.title("🤖 Risk Management Challenge Session with ProductLead and two AI-agents")
 
 # --- Initialization ---
+
 default_values = {
     "chat_initialized": False,
     "processing": False,
@@ -258,12 +279,18 @@ default_values = {
     "next_agent": None,
     TASK_PROMPT_KEY: "",
     POLICY_TEXT_KEY: "",
+    # Editable prompts will be initialized by function below
 }
 for key, value in default_values.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
+# --- Initialize Editable Prompts (Run Once) ---
+
+initialize_editable_prompts()
+
 # --- Configuration Loading ---
+
 if not st.session_state.config:
     try:
         st.session_state.config = load_config(config_path)
@@ -272,33 +299,37 @@ if not st.session_state.config:
         st.sidebar.error(f"Failed to load configuration (placeholder): {e}")
         st.stop()
 
-# --- Chat Setup Area ---
-# This now uses the setup_chat function defined within app.py
+# --- Chat Setup Area (Only if Manager doesn't exist) ---
+
+# We now delay the setup until "Start Chat" is pressed to ensure edited prompts are used.
 if not st.session_state.manager and st.session_state.config:
-    try:
-        with st.spinner("Setting up agents based on configuration..."):
-             logger.info("Setting up chat components...")
-             st.session_state.manager, st.session_state.boss_agent = setup_chat(
-                 llm_provider=st.session_state.config.get("llm_provider", VERTEX_AI),
-                 model_name=st.session_state.config.get("model_name", "gemini-1.5-pro-002"),
-                 policy_text=st.session_state.get(POLICY_TEXT_KEY, "")
-             )
-             logger.info("Chat components (manager, boss_agent) set up.")
-    except Exception as e:
-         logger.error(f"Error setting up chat components: {traceback.format_exc()}")
-         st.session_state.error_message = f"Setup failed: {e}"
-         st.session_state.manager = None
-         st.session_state.boss_agent = None
-         st.session_state.chat_initialized = False
+     # Show a placeholder or indicator that setup will happen on start
+     st.sidebar.info("Agents will be configured when chat starts.")
+     pass # Don't set up manager/boss here yet
+
+# --- Agent Configuration Expander (Sidebar) ---
+
+with st.sidebar.expander("Agent Configuration"):
+    st.caption("Edit agent system prompts for this session:")
+    for agent_name, config_info in AGENT_CONFIG.items():
+        st.text_area(
+            f"Edit {agent_name} System Prompt",
+            key=config_info["key"], # Link to session state key
+            height=150,
+            disabled=st.session_state.chat_initialized, # Disable after chat starts
+            help=f"Modify the instructions for the {agent_name} agent."
+        )
+        # Optional: Add 'Save to File' button here if desired later
 
 # --- Start Chat Area ---
+
 st.sidebar.header("Start New Chat")
 
 policy_text_input = st.sidebar.text_area(
     "Enter the Policy Text:",
     height=100,
     key=POLICY_TEXT_KEY,
-    disabled=st.session_state.chat_initialized or not st.session_state.manager,
+    disabled=st.session_state.chat_initialized or not st.session_state.config, # Disable if no config or chat started
     help="Enter the policy content here. This will be injected into the PolicyGuard agent's instructions."
 )
 
@@ -306,31 +337,34 @@ initial_prompt_input = st.sidebar.text_area(
     "Enter the Task/Product Description:",
     height=150,
     key=TASK_PROMPT_KEY,
-    disabled=st.session_state.chat_initialized or not st.session_state.manager,
+    disabled=st.session_state.chat_initialized or not st.session_state.config, # Disable if no config or chat started
     help="Describe the product or task. Do NOT include the policy text here."
 )
 
 if st.sidebar.button("🚀 Start Chat", key="start_chat",
                     disabled=st.session_state.chat_initialized
                              or not st.session_state.get(TASK_PROMPT_KEY)
-                             or not st.session_state.manager):
+                             or not st.session_state.config): # Check config instead of manager
 
     task_prompt = st.session_state.get(TASK_PROMPT_KEY, "").strip()
-    if not st.session_state.chat_initialized and task_prompt and st.session_state.manager and st.session_state.boss_agent:
+    if not st.session_state.chat_initialized and task_prompt and st.session_state.config:
         st.session_state.processing = True
         st.session_state.error_message = None
         try:
-            with st.spinner("Initiating chat task..."):
-                logger.info("Initiating chat task...")
-                # Need to re-run setup here IF policy can change after initial load
-                # and before starting chat. If setup is fast, it's simpler.
-                # Alternatively, modify PolicyGuard agent directly if possible.
-                # For now, assume re-running setup is acceptable.
-                logger.info("Re-running setup with potentially updated policy before starting chat...")
+            with st.spinner("Setting up agents and initiating chat task..."):
+                logger.info("Setting up chat components with potentially updated prompts and policy...")
+
+                # Get current prompts from session state
+                current_agent_prompts = {}
+                for agent_name, config_info in AGENT_CONFIG.items():
+                    current_agent_prompts[agent_name] = st.session_state.get(config_info["key"], f"Error: Missing prompt for {agent_name}")
+
+                # Setup chat using current prompts and policy
                 st.session_state.manager, st.session_state.boss_agent = setup_chat(
                     llm_provider=st.session_state.config.get("llm_provider", VERTEX_AI),
                     model_name=st.session_state.config.get("model_name", "gemini-1.5-pro-002"),
-                    policy_text=st.session_state.get(POLICY_TEXT_KEY, "") # Use current policy text
+                    policy_text=st.session_state.get(POLICY_TEXT_KEY, ""), # Use current policy text
+                    agent_prompts=current_agent_prompts # Pass the editable prompts
                 )
                 logger.info("Setup complete. Initiating chat task...")
 
@@ -345,22 +379,27 @@ if st.sidebar.button("🚀 Start Chat", key="start_chat",
                 logger.info(f"Chat initiated. Task prompt sent. Next agent: {st.session_state.next_agent.name if st.session_state.next_agent else 'None'}")
 
         except Exception as e:
-            logger.error(f"Error initiating chat task: {traceback.format_exc()}")
-            st.session_state.error_message = f"Initiation failed: {e}"
+            logger.error(f"Error setting up or initiating chat task: {traceback.format_exc()}")
+            st.session_state.error_message = f"Setup/Initiation failed: {e}"
             st.session_state.chat_initialized = False
+            # Reset manager/boss if setup failed
+            st.session_state.manager = None
+            st.session_state.boss_agent = None
         finally:
             st.session_state.processing = False
         st.rerun()
 
 # --- Display Error Message ---
+
 if st.session_state.error_message:
     st.error(st.session_state.error_message)
 
 # --- Main Chat Interaction Area ---
+
 chat_container = st.container()
 
 with chat_container:
-    if st.session_state.chat_initialized:
+    if st.session_state.chat_initialized and st.session_state.manager: # Check manager exists
         display_messages(st.session_state.messages)
 
         if st.session_state.next_agent and not st.session_state.processing:
@@ -368,10 +407,14 @@ with chat_container:
 
             if next_agent_name == BOSS_NAME:
                 st.markdown(f"**Your turn (as {BOSS_NAME}):**")
-                with st.form(key=f'boss_input_form_{len(st.session_state.messages)}'):
+                # Use a unique key based on message length to avoid state issues on rerun
+                form_key = f'boss_input_form_{len(st.session_state.messages)}'
+                input_key = f"user_input_{len(st.session_state.messages)}"
+
+                with st.form(key=form_key):
                     user_input = st.text_input(
                         "Enter your message:",
-                        key=f"user_input_{len(st.session_state.messages)}",
+                        key=input_key,
                         disabled=st.session_state.processing,
                         placeholder="Type your message and press Enter to send..."
                     )
@@ -382,7 +425,7 @@ with chat_container:
                     if submitted:
                         if not user_input:
                              st.warning("Please enter a message.")
-                             st.stop()
+                             # No rerun needed, just stay waiting for input
                         else:
                             st.session_state.processing = True
                             st.session_state.error_message = None
@@ -402,6 +445,7 @@ with chat_container:
                                 except Exception as e:
                                      logger.error(f"Error sending user message: {traceback.format_exc()}")
                                      st.session_state.error_message = f"Error sending message: {e}"
+                                     should_rerun = True # Rerun to show error
 
                             st.session_state.processing = False
                             if should_rerun:
@@ -426,7 +470,7 @@ with chat_container:
                     except Exception as e:
                         logger.error(f"Error during {next_agent_name}'s turn: {traceback.format_exc()}")
                         st.session_state.error_message = f"Error during {next_agent_name}'s turn: {e}"
-                        st.session_state.next_agent = None
+                        st.session_state.next_agent = None # Stop the chat on agent error
                         should_rerun = True
 
                 st.session_state.processing = False
@@ -437,18 +481,30 @@ with chat_container:
              st.success("Chat finished.")
 
 # --- Clear Chat Button ---
-if st.session_state.chat_initialized or st.session_state.error_message:
+
+if st.session_state.chat_initialized or st.session_state.error_message or not st.session_state.manager: # Allow reset if setup failed
      if st.sidebar.button("Clear Chat / Reset", key="clear_chat"):
+         # Reset core state
          st.session_state.chat_initialized = False
          st.session_state.processing = False
          st.session_state.error_message = None
          st.session_state.messages = []
          st.session_state.next_agent = None
-         st.session_state[TASK_PROMPT_KEY] = ""
-         st.session_state[POLICY_TEXT_KEY] = ""
-
          st.session_state.manager = None
          st.session_state.boss_agent = None
 
-         logger.info("Chat state cleared. Re-running setup on next interaction.")
+         # Clear inputs *but keep editable prompts*
+         st.session_state[TASK_PROMPT_KEY] = ""
+         st.session_state[POLICY_TEXT_KEY] = ""
+
+         # # Optional: Reset editable prompts to default (Uncomment if desired)
+         # for agent_name, config in AGENT_CONFIG.items():
+         #     try:
+         #         st.session_state[config["key"]] = _read_system_message(config["file"])
+         #     except Exception as e:
+         #         st.session_state[config["key"]] = f"Error reloading default from {config['file']}: {e}"
+         #         logger.error(f"Failed to reload prompt for {agent_name} during reset: {e}")
+
+         logger.info("Chat state cleared. Ready for new configuration/start.")
          st.rerun()
+
