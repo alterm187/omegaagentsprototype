@@ -14,7 +14,7 @@ from common_functions import (
 # Keep these imports for now, but they might cause errors if not properly defined/imported
 # from main import load_config, config_path # Commented out for now, needs verification
 # Placeholder - Define or import load_config and config_path appropriately
-def load_config(path): 
+def load_config(path):
     # Example placeholder - replace with actual implementation
     print(f"Warning: Using placeholder load_config({path}). Replace with actual logic.")
     # In a real scenario, this would load config from a file (e.g., JSON, YAML)
@@ -76,7 +76,7 @@ def display_messages(messages):
 
 
 # --- Streamlit App UI ---
-st.title("🤖 Multi-Agent Chat")
+st.title("🤖 Risk Management Challenge Session")
 
 # --- Initialization ---
 if "chat_initialized" not in st.session_state:
@@ -178,35 +178,48 @@ with chat_container:
 
             if next_agent_name == BOSS_NAME:
                 st.markdown(f"**Your turn (as {BOSS_NAME}):**")
-                user_input = st.text_input(
-                    "Enter your message:",
-                    key=f"user_input_{len(st.session_state.messages)}",
-                    disabled=st.session_state.processing
-                )
-                if st.button("✉️ Send Message", key=f"send_{len(st.session_state.messages)}", disabled=st.session_state.processing or not user_input):
-                    st.session_state.processing = True
-                    st.session_state.error_message = None
-                    should_rerun = False
-                    with st.spinner(f"Sending message as {BOSS_NAME}..."):
-                        try:
-                            logger.info(f"Sending user message: {user_input}")
-                            # Use send_user_message from common_functions
-                            new_messages, next_agent = send_user_message(
-                                st.session_state.manager,
-                                st.session_state.boss_agent,
-                                user_input
-                            )
-                            st.session_state.messages.extend(new_messages)
-                            st.session_state.next_agent = next_agent
-                            logger.info(f"User message sent. Next agent: {next_agent.name if next_agent else 'None'}")
-                            should_rerun = True
-                        except Exception as e:
-                             logger.error(f"Error sending user message: {traceback.format_exc()}")
-                             st.session_state.error_message = f"Error sending message: {e}"
+                # Use st.form for Boss input
+                with st.form(key=f'boss_input_form_{len(st.session_state.messages)}'): # Unique key per turn
+                    user_input = st.text_input(
+                        "Enter your message:",
+                        key=f"user_input_{len(st.session_state.messages)}", # Keep unique key for input
+                        disabled=st.session_state.processing,
+                        placeholder="Type your message and press Enter to send..." # Added placeholder
+                    )
+                    # Replace st.button with st.form_submit_button
+                    submitted = st.form_submit_button(
+                        "✉️ Send Message",
+                        disabled=st.session_state.processing
+                    )
+                    # Logic executed upon form submission (Enter key or button click)
+                    if submitted:
+                        if not user_input: # Prevent sending empty messages
+                             st.warning("Please enter a message.")
+                             st.stop() # Stop execution for this run to prevent processing empty input
+                        else:
+                            st.session_state.processing = True
+                            st.session_state.error_message = None
+                            should_rerun = False
+                            with st.spinner(f"Sending message as {BOSS_NAME}..."):
+                                try:
+                                    logger.info(f"Sending user message: {user_input}")
+                                    # Use send_user_message from common_functions
+                                    new_messages, next_agent = send_user_message(
+                                        st.session_state.manager,
+                                        st.session_state.boss_agent,
+                                        user_input # Value is accessible after form submission
+                                    )
+                                    st.session_state.messages.extend(new_messages)
+                                    st.session_state.next_agent = next_agent
+                                    logger.info(f"User message sent. Next agent: {next_agent.name if next_agent else 'None'}")
+                                    should_rerun = True
+                                except Exception as e:
+                                     logger.error(f"Error sending user message: {traceback.format_exc()}")
+                                     st.session_state.error_message = f"Error sending message: {e}"
 
-                    st.session_state.processing = False
-                    if should_rerun:
-                        st.rerun()
+                            st.session_state.processing = False
+                            if should_rerun:
+                                st.rerun() # Rerun to display new messages and next step
 
             else: # Auto-run AI Agent's Turn
                 st.markdown(f"**Running turn for:** {next_agent_name}...")
