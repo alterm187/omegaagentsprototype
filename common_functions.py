@@ -152,42 +152,45 @@ def create_groupchat_manager(groupchat: GroupChat, llm_config: LLMConfiguration)
     )
 
 
-# --- Updated Chat Initiation ---
+# --- Updated Chat Initiation (Fixed - Adds initial message to history) ---
 def initiate_chat_task(
     user_agent: UserProxyAgent, # This is the 'Boss' agent
     manager: GroupChatManager,
     initial_prompt: str
     ) -> Tuple[List[Dict], Optional[Agent]]:
     """
-    Initiates the chat by preparing the first message structure from the user agent (Boss).
-    Returns the initial message list (containing the first message) and explicitly sets PolicyGuard as the next speaker.
-    NOTE: This function *does not* add the message to the manager's history itself.
-    It relies on the caller (app.py) to manage the state and initiate the first agent turn.
+    Initiates the chat: resets history, adds the first message from Boss to the 
+    manager's groupchat history, and sets the first speaker.
+    Returns the initial message list (for display) and the next speaker.
     """
-    # manager.groupchat.reset() # Reset is usually handled before calling this, e.g., in app.py's clear/start logic.
+    manager.groupchat.reset() # Ensure chat history is clear before starting
+    logger.info("GroupChat history reset.")
+
     initial_message = {
         "role": "user",
         "content": initial_prompt.strip(),
         "name": user_agent.name
     }
-    logger.info(f"Prepared initial message structure for {user_agent.name}.")
+    # *** Add the initial message to the manager's history ***
+    manager.groupchat.messages.append(initial_message)
+    logger.info(f"Initial message from {user_agent.name} added to manager history.")
 
     policy_guard_agent = manager.groupchat.agent_by_name("PolicyGuard")
     if not policy_guard_agent:
         logger.error("PolicyGuard agent not found in groupchat! Cannot explicitly set as first speaker.")
-        # Select speaker assuming the initial_message is the last one (even though not yet formally in history)
+        # Select speaker based on the now-added initial message
         next_speaker = manager.groupchat.select_speaker(user_agent, manager.groupchat)
         logger.warning(f"Falling back to default speaker selection. Next: {next_speaker.name if next_speaker else 'None'}")
     else:
         next_speaker = policy_guard_agent
-        logger.info(f"Explicitly selected 'PolicyGuard' as the first agent intended to speak.")
+        logger.info(f"Explicitly selected 'PolicyGuard' as the first agent to speak.")
 
-    # Return the prepared initial message and the selected next speaker.
+    # Return the initial message (for display) and the selected next speaker.
     # app.py will add this message to st.session_state.messages and then trigger the first turn.
     return [initial_message], next_speaker
 
 
-# --- Agent Step Execution (Revised Logic) ---
+# --- Agent Step Execution (Revised Logic - No changes here) ---
 def run_agent_step(
     manager: GroupChatManager,
     speaker: Agent
@@ -294,7 +297,7 @@ def run_agent_step(
     return newly_added_messages, next_speaker
 
 
-# --- User Message Sending (Revised to align with run_agent_step/manual add) ---
+# --- User Message Sending (Revised to align with run_agent_step/manual add - No changes here) ---
 def send_user_message(
     manager: GroupChatManager,
     user_agent: UserProxyAgent, # Boss agent
