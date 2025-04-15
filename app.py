@@ -128,19 +128,19 @@ def setup_chat(
             if POLICY_INJECTION_MARKER in base_policy_guard_sys_msg:
                 policy_guard_final_sys_msg = base_policy_guard_sys_msg.replace(
                     POLICY_INJECTION_MARKER,
-                    f"{POLICY_INJECTION_MARKER}
+                    f"""{POLICY_INJECTION_MARKER}
 
-{policy_text.strip()}",
+{policy_text.strip()}""",
                     1
                 )
                 logger.info(f"Injected policy text into PolicyGuard system message under '{POLICY_INJECTION_MARKER}'.")
             else:
                 logger.warning(f"Policy injection marker '{POLICY_INJECTION_MARKER}' not found in {POLICY_GUARD_SYS_MSG_FILE}. Appending policy text instead.")
-                policy_guard_final_sys_msg += f"
+                policy_guard_final_sys_msg += f"""
 
 ## Policies
 
-{policy_text.strip()}"
+{policy_text.strip()}"""
         else:
              logger.info(f"Using default system message for PolicyGuard from {POLICY_GUARD_SYS_MSG_FILE}.")
 
@@ -217,21 +217,18 @@ def display_messages(messages):
                     parts.append(item)
                 else:
                     parts.append(str(item))
-            content = "
-".join(parts)
+            content = "\n".join(parts)
         elif not isinstance(content, str):
              content = str(content)
 
         if sender_name == BOSS_NAME:
             with st.chat_message("user", avatar="🧑"):
-                 st.markdown(f"""**{sender_name}:**
-{content}""")
+                 st.markdown(f"""**{sender_name}:**\n{content}""")
         else:
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
             if is_agent_message:
                  with st.chat_message("assistant", avatar="🤖"):
-                      st.markdown(f"""**{sender_name}:**
-{content}""")
+                      st.markdown(f"""**{sender_name}:**\n{content}""")
             else:
                  with st.chat_message("system", avatar="⚙️"):
                       st.markdown(f"""_{sender_name}: {content}_""")
