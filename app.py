@@ -53,7 +53,15 @@ AGENT_CONFIG = {
     BOSS_NAME: {"file": BOSS_SYS_MSG_FILE, "key": BOSS_EDIT_KEY},
 }
 
+# Feature 4: Context Limit for Gemini Pro 1.5 (approximate)
+CONTEXT_LIMIT = 1_000_000
+WARNING_THRESHOLD = 0.85 # Warn at 85% of context limit
+
 # --- Helper Functions ---
+
+def estimate_tokens(text: str) -> int:
+    """Approximates token count using character count / 4."""
+    return len(text or "") // 4
 
 def _read_system_message(file_path: str) -> str:
     """Reads system message from a file, using the function from common_functions."""
@@ -77,6 +85,36 @@ def initialize_editable_prompts():
             except Exception as e:
                 st.session_state[config["key"]] = f"Error loading default from {config['file']}: {e}"
                 logger.error(f"Failed to load initial prompt for {agent_name} from {config['file']}: {e}")
+
+def update_token_warning():
+    """Calculates estimated total tokens and displays warning if near limit."""
+    policy_text = st.session_state.get(POLICY_TEXT_KEY, "")
+    task_text = st.session_state.get(TASK_PROMPT_KEY, "")
+    policy_guard_prompt = st.session_state.get(POLICY_GUARD_EDIT_KEY, "")
+    challenger_prompt = st.session_state.get(CHALLENGER_EDIT_KEY, "")
+    boss_prompt = st.session_state.get(BOSS_EDIT_KEY, "")
+
+    # Estimate tokens for each part
+    policy_tokens = estimate_tokens(policy_text)
+    task_tokens = estimate_tokens(task_text)
+    policy_guard_tokens = estimate_tokens(policy_guard_prompt)
+    challenger_tokens = estimate_tokens(challenger_prompt)
+    boss_tokens = estimate_tokens(boss_prompt)
+
+    total_system_prompt_tokens = policy_guard_tokens + challenger_tokens + boss_tokens
+    total_input_tokens = policy_tokens + task_tokens
+    total_estimated_tokens = total_input_tokens + total_system_prompt_tokens
+
+    # Update caption (using global placeholder defined later)
+    if 'token_info_placeholder' in globals():
+        token_info_placeholder.caption(f"Estimated Input Tokens: ~{total_estimated_tokens:,} / {CONTEXT_LIMIT:,}")
+
+    # Update warning (using global placeholder defined later)
+    if 'token_warning_placeholder' in globals():
+        if total_estimated_tokens > CONTEXT_LIMIT * WARNING_THRESHOLD:
+            token_warning_placeholder.warning(f"Inputs approaching context limit ({WARNING_THRESHOLD*100:.0f}%). Total: ~{total_estimated_tokens:,}")
+        else:
+            token_warning_placeholder.empty() # Clear warning
 
 def setup_chat(
     llm_provider: str = VERTEX_AI,
@@ -264,7 +302,7 @@ config_path = "config.json" # Example placeholder path
 
 # --- Streamlit App UI ---
 
-st.title("🤖 Risk Management Challenge Session with ProductLead and two AI-agents")
+st.title("🤖 Risk Management Challenge Session with ProductLead and two AI agents")
 
 # --- Initialization ---
 
@@ -317,7 +355,8 @@ with st.sidebar.expander("Agent Configuration"):
             key=config_info["key"], # Link to session state key
             height=150,
             disabled=st.session_state.chat_initialized, # Disable after chat starts
-            help=f"Modify the instructions for the {agent_name} agent."
+            help=f"Modify the instructions for the {agent_name} agent.",
+            on_change=update_token_warning # Add on_change hook
         )
         # Optional: Add 'Save to File' button here if desired later
 
@@ -325,12 +364,17 @@ with st.sidebar.expander("Agent Configuration"):
 
 st.sidebar.header("Start New Chat")
 
+# Create placeholders for token info/warnings *before* the text areas
+token_info_placeholder = st.sidebar.empty()
+token_warning_placeholder = st.sidebar.empty()
+
 policy_text_input = st.sidebar.text_area(
     "Enter the Policy Text:",
     height=100,
     key=POLICY_TEXT_KEY,
     disabled=st.session_state.chat_initialized or not st.session_state.config, # Disable if no config or chat started
-    help="Enter the policy content here. This will be injected into the PolicyGuard agent's instructions."
+    help="Enter the policy content here. This will be injected into the PolicyGuard agent's instructions.",
+    on_change=update_token_warning # Add on_change hook
 )
 
 initial_prompt_input = st.sidebar.text_area(
@@ -338,8 +382,12 @@ initial_prompt_input = st.sidebar.text_area(
     height=150,
     key=TASK_PROMPT_KEY,
     disabled=st.session_state.chat_initialized or not st.session_state.config, # Disable if no config or chat started
-    help="Describe the product or task. Do NOT include the policy text here."
+    help="Describe the product or task. Do NOT include the policy text here.",
+    on_change=update_token_warning # Add on_change hook
 )
+
+# Initial call to display token info/warning based on default/current values
+update_token_warning()
 
 if st.sidebar.button("🚀 Start Chat", key="start_chat",
                     disabled=st.session_state.chat_initialized
@@ -506,5 +554,7 @@ if st.session_state.chat_initialized or st.session_state.error_message or not st
          #         logger.error(f"Failed to reload prompt for {agent_name} during reset: {e}")
 
          logger.info("Chat state cleared. Ready for new configuration/start.")
+         # Also manually trigger token update on reset
+         update_token_warning()
          st.rerun()
 
