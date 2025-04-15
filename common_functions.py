@@ -24,9 +24,33 @@ def read_system_message(filename):
         return "You are a helpful assistant."
 
 
-def create_agent(name: str, system_message_file: str, llm_config: LLMConfiguration, agent_type="assistant") -> autogen.Agent:
-    """Creates an agent with the specified configuration."""
-    system_message = read_system_message(system_message_file)
+def create_agent(
+    name: str,
+    llm_config: LLMConfiguration,
+    system_message_file: Optional[str] = None,
+    system_message_content: Optional[str] = None,
+    agent_type="assistant"
+    ) -> autogen.Agent:
+    """
+    Creates an agent with the specified configuration.
+    Prioritizes system_message_content if provided, otherwise reads from system_message_file.
+    """
+    system_message = None
+    if system_message_content:
+        system_message = system_message_content.strip()
+        logger.debug(f"Using provided system message content for agent {name}.")
+    elif system_message_file:
+        system_message = read_system_message(system_message_file)
+        logger.debug(f"Read system message from file {system_message_file} for agent {name}.")
+    else:
+        logger.error(f"Neither system_message_file nor system_message_content provided for agent {name}. Using default.")
+        # raise ValueError(f"Must provide either system_message_file or system_message_content for agent {name}")
+        system_message = "You are a helpful assistant." # Fallback if neither is provided, although the check below is better
+
+    if not system_message: # Double-check in case read_system_message failed silently or content was empty
+         logger.error(f"Failed to obtain a system message for agent {name}. Cannot create agent.")
+         raise ValueError(f"System message is empty or could not be loaded for agent {name}")
+
     config = llm_config.get_config()
     if not config:
          logger.error(f"LLM configuration invalid or missing for agent {name}. Cannot create agent.")
@@ -51,6 +75,7 @@ def create_agent(name: str, system_message_file: str, llm_config: LLMConfigurati
             llm_config=config,
             is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
             )
+    logger.info(f"Agent '{name}' created successfully (Type: {agent_type}).")
     return agent
 
 
@@ -68,6 +93,10 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
     if not boss_agent:
         logger.error("No UserProxyAgent (Boss) found in custom_speaker_selection!")
         logger.debug("Selecting first agent as fallback (Boss not found).")
+        # Ensure groupchat.agents is not empty before accessing index 0
+        if not groupchat.agents:
+             logger.critical("Groupchat has no agents!")
+             raise ValueError("Cannot select speaker from empty agent list.")
         return groupchat.agents[0]
 
     if not groupchat.messages:

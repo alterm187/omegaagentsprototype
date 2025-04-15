@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-from typing import Tuple, Optional 
+from typing import Tuple, Optional
 
 # Import necessary components from autogen and local modules
 import autogen
@@ -31,29 +31,46 @@ BOSS_SYS_MSG_FILE = "Boss.md"
 POLICY_GUARD_SYS_MSG_FILE = "PolicyGuard.md"
 CHALLENGER_SYS_MSG_FILE = "FirstLineChallenger.md"
 
-# Define credentials path (No longer needed for Vertex AI if using st.secrets)
-# CREDENTIALS_FILE_PATH = '../sa3.json' # Commented out or remove
+# Marker for policy injection
+POLICY_INJECTION_MARKER = "## Policies"
 
 # Helper function to read system message from file
 def _read_system_message(file_path: str) -> str:
+    """Reads system message from a file, trying relative path first, then script directory."""
     try:
-        with open(file_path, "r") as f:
+        # Try relative path first
+        with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        script_dir = os.path.dirname(__file__)
-        alt_path = os.path.join(script_dir, file_path)
-        with open(alt_path, "r") as f:
-            return f.read()
+        try:
+            # Try path relative to the script directory as a fallback
+            script_dir = os.path.dirname(__file__)
+            alt_path = os.path.join(script_dir, file_path)
+            with open(alt_path, "r", encoding="utf-8") as f:
+                logger.warning(f"Could not find {file_path} directly, reading from {alt_path}")
+                return f.read()
+        except FileNotFoundError:
+             logger.error(f"System message file not found at {file_path} or {alt_path}")
+             raise FileNotFoundError(f"Agent system message file not found: {file_path}")
+        except Exception as e:
+             logger.error(f"Error reading system message file {file_path} (or alt): {e}", exc_info=True)
+             raise # Re-raise other errors
 
-
-def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-002") -> Tuple[GroupChatManager, UserProxyAgent]:
+# --- UPDATED setup_chat function ---
+def setup_chat(
+    llm_provider: str = VERTEX_AI,
+    model_name: str = "gemini-1.5-pro-002",
+    policy_text: Optional[str] = None  # Add policy_text parameter
+    ) -> Tuple[GroupChatManager, UserProxyAgent]:
     """
     Sets up the agents, group chat, and manager based on selected LLM provider.
+    Injects provided policy_text into PolicyGuard's system message.
     Reads Vertex AI credentials from st.secrets.
 
     Args:
         llm_provider (str): The LLM provider to use (e.g., VERTEX_AI, AZURE).
         model_name (str): The specific model name for the chosen provider.
+        policy_text (Optional[str]): The policy text provided by the user.
 
     Returns:
         Tuple[GroupChatManager, UserProxyAgent]: The configured GroupChatManager and the Boss agent.
@@ -64,6 +81,10 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
         Exception: For other potential setup errors.
     """
     logger.info(f"Setting up chat with provider: {llm_provider}, model: {model_name}")
+    if policy_text:
+        logger.info("Policy text provided, will inject into PolicyGuard.")
+    else:
+        logger.info("No policy text provided, PolicyGuard will use default from file.")
 
     # --- LLM Configuration ---
     if llm_provider == VERTEX_AI:
@@ -97,11 +118,8 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
 
     # Add elif blocks here for AZURE, ANTHROPIC etc. if needed
     # elif llm_provider == AZURE:
-    #     # Read Azure credentials from st.secrets["azure_credentials"] for example
-    #     if "azure_credentials" not in st.secrets or not all(k in st.secrets["azure_credentials"] for k in ["api_key", "base_url", "api_version"]):
-    #         raise ValueError("Missing Azure credentials in Streamlit secrets.")
-    #     azure_creds = st.secrets["azure_credentials"]
-    #     llm_config = LLMConfiguration(AZURE, model_name, api_key=azure_creds["api_key"], ...)
+    #     # Example: Read Azure credentials from st.secrets["azure_credentials"]
+    #     # ...
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
@@ -111,37 +129,72 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
 
     # --- Agent Creation ---
     try:
-        # Ensure system message files exist - use absolute paths or ensure relative paths work from execution context
-        for file_path in [BOSS_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE]:
+        # Ensure non-PolicyGuard system message files exist
+        for file_path in [BOSS_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE]: # Read policy guard file for base
             if not os.path.exists(file_path):
-                raise FileNotFoundError(f"Agent system message file not found: {file_path}")
-        # Load system messages from Streamlit session state
-        boss_sys_msg = _read_system_message(BOSS_SYS_MSG_FILE)  # Assuming this helper exists or create it
-        policy_guard_sys_msg = st.session_state.get("policy_guard_sys_msg", _read_system_message(POLICY_GUARD_SYS_MSG_FILE))
-        first_line_challenger_sys_msg = st.session_state.get("first_line_challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE))
+                # Try alternative path check using helper's logic (though helper will raise if needed)
+                script_dir = os.path.dirname(__file__)
+                alt_path = os.path.join(script_dir, file_path)
+                if not os.path.exists(alt_path):
+                    raise FileNotFoundError(f"Agent system message file not found: {file_path}")
+
+        # --- Create Boss Agent (using file) ---
         boss = create_agent(
-            BOSS_NAME,
-            BOSS_SYS_MSG_FILE,  # Pass the system message file path
+            name=BOSS_NAME,
             llm_config=llm_config,
+            system_message_file=BOSS_SYS_MSG_FILE, # Reads from file
             agent_type="user_proxy",
         )
+
+        # --- Prepare PolicyGuard System Message ---
+        base_policy_guard_sys_msg = _read_system_message(POLICY_GUARD_SYS_MSG_FILE)
+        policy_guard_final_sys_msg = base_policy_guard_sys_msg
+
+        if policy_text and policy_text.strip():
+            # Inject the policy text
+            if POLICY_INJECTION_MARKER in base_policy_guard_sys_msg:
+                policy_guard_final_sys_msg = base_policy_guard_sys_msg.replace(
+                    POLICY_INJECTION_MARKER,
+                    f"""{POLICY_INJECTION_MARKER}
+
+{policy_text.strip()}""",
+                    1 # Replace only the first occurrence
+                )
+                logger.info(f"Injected policy text into PolicyGuard system message under '{POLICY_INJECTION_MARKER}'.")
+            else:
+                logger.warning(f"Policy injection marker '{POLICY_INJECTION_MARKER}' not found in {POLICY_GUARD_SYS_MSG_FILE}. Appending policy text instead.")
+                policy_guard_final_sys_msg += f"""
+
+## Policies
+
+{policy_text.strip()}"""
+        else:
+             logger.info(f"Using default system message for PolicyGuard from {POLICY_GUARD_SYS_MSG_FILE}.")
+
+        # --- Create PolicyGuard Agent (using content) ---
         policy_guard = create_agent(
-            POLICY_GUARD_NAME,
-            POLICY_GUARD_SYS_MSG_FILE,
-            llm_config=llm_config
-        )
-        first_line_challenger = create_agent(
-            CHALLENGER_NAME,            
-            CHALLENGER_SYS_MSG_FILE,
+            name=POLICY_GUARD_NAME,
             llm_config=llm_config,
+            system_message_content=policy_guard_final_sys_msg, # Pass constructed content
+            system_message_file=None # Explicitly set file to None
         )
+
+        # --- Create Challenger Agent (using file) ---
+        # Load system message for Challenger (example using session state if needed for future features)
+        # first_line_challenger_sys_msg = st.session_state.get("first_line_challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE))
+        first_line_challenger = create_agent(
+            name=CHALLENGER_NAME,
+            llm_config=llm_config,
+            system_message_file=CHALLENGER_SYS_MSG_FILE, # Reads from file
+            # system_message_content=first_line_challenger_sys_msg # Or use content if implementing editable prompts feature
+        )
+
         logger.info("Agents created successfully.")
     except FileNotFoundError as e:
         logger.error(e)
         raise
-
-    except ValueError as e:
-        logger.error(f"Agent creation failed: {e}")
+    except ValueError as e: # Catch errors from create_agent or LLM config
+        logger.error(f"Agent creation failed: {e}", exc_info=True)
         raise
     except Exception as e:
         logger.error(f"Unexpected error during agent creation: {e}", exc_info=True)
@@ -179,20 +232,29 @@ def setup_chat(llm_provider: str = VERTEX_AI, model_name: str = "gemini-1.5-pro-
 # because it relies on st.secrets which is only available via 'streamlit run app.py'.
 # You would need to manually change llm_provider or add fallback logic here for local testing.
 if __name__ == "__main__":
-    print("Running main.py script (for local testing - may not work with st.secrets)...")
+    print("Running main.py script (for local testing - may not work with st.secrets).")
+    # Add a dummy policy for local testing if desired
+    test_policy = "This is a sample policy for local testing."
+    print(f"Using test policy for local run: '{test_policy}'")
     try:
         print("Attempting to set up chat via setup_chat() locally...")
         # WARNING: This call will likely fail if setup_chat() tries to access st.secrets
-        test_manager, test_boss_agent = setup_chat() # Example: Call setup_chat
+        # Pass the test policy text here for local execution
+        test_manager, test_boss_agent = setup_chat(policy_text=test_policy) # Example: Call setup_chat with test policy
         print("-" * 20)
         print("Local setup successful (if st.secrets wasn't required).")
         print(f"  Manager Name: {test_manager.name}")
         print(f"  Boss Agent Name: {test_boss_agent.name}")
         print(f"  Team Agents: {[agent.name for agent in test_manager.groupchat.agents]}")
+        # You could inspect the PolicyGuard's system message if setup succeeded
+        # policy_guard_agent = next((a for a in test_manager.groupchat.agents if a.name == POLICY_GUARD_NAME), None)
+        # if policy_guard_agent:
+        #     print("\nPolicyGuard System Message (First 200 chars):")
+        #     print(policy_guard_agent.system_message[:200] + "...")
         print("-" * 20)
         # You could add a simple initiation test here too, IF setup succeeded:
         # print("Attempting to initiate chat task (Testing purposes)...")
-        # test_initial_prompt = "This is a local test task description.\nPolicy: Test policy content."
+        # test_initial_prompt = "This is a local test task description." # Don't include policy here
         # initial_messages, next_agent = initiate_chat_task(test_boss_agent, test_manager, test_initial_prompt)
         # print("Chat initiated for testing.")
         # print(f"Initial messages count: {len(initial_messages)}")
@@ -203,8 +265,6 @@ if __name__ == "__main__":
     except FileNotFoundError as e:
         print(f"\n*** LOCAL SETUP FAILED: File Not Found. ***")
         print(f"    Error details: {e}")
-        # If it was credentials file:
-        # print(f"    Please ensure '{CREDENTIALS_FILE_PATH}' exists relative to the script's execution directory if testing locally without secrets.")
     except (ValueError, KeyError) as e:
         # This will likely catch the 'st.secrets not found' error when run locally
         print(f"\n*** LOCAL SETUP FAILED: Configuration, Value, or Key Error. ***")

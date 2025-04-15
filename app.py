@@ -32,6 +32,8 @@ logging.basicConfig(level=logging.INFO)
 
 # --- Constants and Configuration ---
 MAX_MESSAGES_DISPLAY = 50 # Limit messages displayed to prevent clutter
+POLICY_TEXT_KEY = "policy_text_input" # Key for the policy text area
+TASK_PROMPT_KEY = "initial_prompt_input" # Key for the task description area
 
 # --- Helper Functions ---
 def display_messages(messages):
@@ -76,19 +78,26 @@ def display_messages(messages):
 
 
 # --- Streamlit App UI ---
-st.title("🤖 Risk Management Challenge Session")
+st.title("🤖 Risk Management Challenge Session with human Product Lead and two AI agents")
 
 # --- Initialization ---
-if "chat_initialized" not in st.session_state:
-    st.session_state.chat_initialized = False
-    st.session_state.processing = False
-    st.session_state.error_message = None
-    st.session_state.config = None
-    st.session_state.manager = None
-    st.session_state.boss_agent = None
-    st.session_state.messages = []
-    st.session_state.next_agent = None
-    st.session_state.initial_prompt = ""
+# Initialize session state variables if they don't exist
+default_values = {
+    "chat_initialized": False,
+    "processing": False,
+    "error_message": None,
+    "config": None,
+    "manager": None,
+    "boss_agent": None,
+    "messages": [],
+    "next_agent": None,
+    TASK_PROMPT_KEY: "", # Initialize task prompt
+    POLICY_TEXT_KEY: "", # Initialize policy text
+    # Add other keys if needed
+}
+for key, value in default_values.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # --- Configuration Loading (using placeholder) ---
 if not st.session_state.config:
@@ -102,15 +111,19 @@ if not st.session_state.config:
 
 # --- Chat Setup Area (Moved out of button click to happen once) ---
 # Setup agents and manager using the loaded config
+# Note: This setup happens on every rerun BEFORE the start button is processed,
+# which means PolicyGuard's system message will be constructed based on the
+# *current* value in the policy text area *before* the chat officially starts.
 if not st.session_state.manager and st.session_state.config:
     try:
         with st.spinner("Setting up agents based on configuration..."):
              logger.info("Setting up chat components...")
-             # Use setup_chat from main.py, passing necessary config details
-             # setup_chat expects llm_provider and model_name based on main.py logic
+             # Pass policy text from session state to setup_chat
              st.session_state.manager, st.session_state.boss_agent = setup_chat(
-                 llm_provider=st.session_state.config.get("llm_provider", "VERTEX_AI"), # Get from config
-                 model_name=st.session_state.config.get("model_name", "gemini-1.5-pro-002") # Get from config
+                 llm_provider=st.session_state.config.get("llm_provider", "VERTEX_AI"),
+                 model_name=st.session_state.config.get("model_name", "gemini-1.5-pro-002"),
+                 # Pass policy text from session state (might be empty initially)
+                 policy_text=st.session_state.get(POLICY_TEXT_KEY, "")
              )
              logger.info("Chat components (manager, boss_agent) set up.")
     except Exception as e:
@@ -123,36 +136,53 @@ if not st.session_state.manager and st.session_state.config:
 
 # --- Start Chat Area (Button triggers initiation) ---
 st.sidebar.header("Start New Chat")
-initial_prompt_input = st.sidebar.text_area(
-    "Enter the initial task for the agents:",
-    height=150,
-    key="initial_prompt_input",
+
+# --- NEW: Policy Text Input ---
+policy_text_input = st.sidebar.text_area(
+    "Enter the Policy Text:",
+    height=100,
+    key=POLICY_TEXT_KEY, # Use defined key
     # Disable if chat is running OR if setup failed (no manager)
-    disabled=st.session_state.chat_initialized or not st.session_state.manager
+    disabled=st.session_state.chat_initialized or not st.session_state.manager,
+    help="Enter the policy content here. This will be injected into the PolicyGuard agent's instructions."
+)
+
+# --- UPDATED: Task Description Input ---
+initial_prompt_input = st.sidebar.text_area(
+    "Enter the Task/Product Description:", # Updated label
+    height=150,
+    key=TASK_PROMPT_KEY, # Use defined key
+    # Disable if chat is running OR if setup failed (no manager)
+    disabled=st.session_state.chat_initialized or not st.session_state.manager,
+    help="Describe the product or task. Do NOT include the policy text here." # Added help text
 )
 
 if st.sidebar.button("🚀 Start Chat", key="start_chat",
-                    # Disable if chat running, no prompt, or setup failed
-                    disabled=st.session_state.chat_initialized or not initial_prompt_input or not st.session_state.manager):
+                    # Disable if chat running, no TASK prompt, or setup failed
+                    disabled=st.session_state.chat_initialized
+                             or not st.session_state.get(TASK_PROMPT_KEY) # Check task prompt specifically
+                             or not st.session_state.manager):
 
-    if not st.session_state.chat_initialized and initial_prompt_input and st.session_state.manager and st.session_state.boss_agent:
-        st.session_state.initial_prompt = initial_prompt_input
+    # Check conditions again inside the button logic for safety
+    task_prompt = st.session_state.get(TASK_PROMPT_KEY, "").strip()
+    if not st.session_state.chat_initialized and task_prompt and st.session_state.manager and st.session_state.boss_agent:
+        # Policy text is already in session state due to the widget
         st.session_state.processing = True
         st.session_state.error_message = None
         try:
             with st.spinner("Initiating chat task..."):
                 logger.info("Initiating chat task...")
-                # Use initiate_chat_task from common_functions
+                # Pass only the TASK description to initiate_chat_task
                 initial_messages, next_agent = initiate_chat_task(
-                    st.session_state.boss_agent, # Pass the boss agent
-                    st.session_state.manager,   # Pass the manager
-                    st.session_state.initial_prompt # Pass the user's prompt
+                    st.session_state.boss_agent,
+                    st.session_state.manager,
+                    task_prompt # Pass only the task description from session state
                 )
                 # Update session state
                 st.session_state.messages = initial_messages
                 st.session_state.next_agent = next_agent
                 st.session_state.chat_initialized = True
-                logger.info(f"Chat initiated. First message sent. Next agent: {st.session_state.next_agent.name if st.session_state.next_agent else 'None'}")
+                logger.info(f"Chat initiated. Task prompt sent. Next agent: {st.session_state.next_agent.name if st.session_state.next_agent else 'None'}")
 
         except Exception as e:
             logger.error(f"Error initiating chat task: {traceback.format_exc()}")
@@ -160,7 +190,7 @@ if st.sidebar.button("🚀 Start Chat", key="start_chat",
             st.session_state.chat_initialized = False # Ensure chat doesn't appear initialized
         finally:
             st.session_state.processing = False
-        st.rerun()
+        st.rerun() # Rerun to display the first message and potentially the next agent's turn
 
 # --- Display Error Message ---
 if st.session_state.error_message:
@@ -260,10 +290,15 @@ if st.session_state.chat_initialized or st.session_state.error_message: # Show c
          st.session_state.error_message = None
          st.session_state.messages = []
          st.session_state.next_agent = None
-         st.session_state.initial_prompt = ""
-         # Reset manager/agents only if setup failed initially, otherwise keep them
-         # if not st.session_state.manager: # Or maybe always reset them? Depends on desired behavior
-         #    st.session_state.manager = None
-         #    st.session_state.boss_agent = None
-         logger.info("Chat state cleared.")
+         st.session_state[TASK_PROMPT_KEY] = "" # Clear task prompt
+         st.session_state[POLICY_TEXT_KEY] = "" # Clear policy text
+
+         # Re-run setup to ensure agents are ready for the next chat
+         # This relies on setup_chat being safe to call multiple times if manager already exists
+         # If setup_chat is expensive or stateful in a problematic way, this might need adjustment
+         # For now, assume it's okay to re-initialize the manager/boss agent pointers
+         st.session_state.manager = None
+         st.session_state.boss_agent = None
+
+         logger.info("Chat state cleared. Re-running setup.")
          st.rerun()
