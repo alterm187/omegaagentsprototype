@@ -241,7 +241,7 @@ def display_messages(messages):
              content = str(content)
 
         if sender_name == BOSS_NAME:
-            with st.chat_message("ProductLead", avatar="🧑"):
+            with st.chat_message("Boss", avatar="🧑"):
                  st.markdown(f"""**{sender_name}:**\n{content}""")
         else:
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
