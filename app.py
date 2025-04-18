@@ -18,7 +18,7 @@ from common_functions import (
     initiate_chat_task, # Import from common_functions
     run_agent_step,     # Import from common_functions
     send_user_message,   # Import from common_functions
-    read_system_message # Now needed in app.py
+    read_system_message # Import the function from common_functions
 )
 
 # Configure logging
@@ -63,24 +63,15 @@ def estimate_tokens(text: str) -> int:
     """Approximates token count using character count / 4."""
     return len(text or "") // 4
 
-def _read_system_message(file_path: str) -> str:
-    """Reads system message from a file, using the function from common_functions."""
-    try:
-        # Try relative path first (common_functions handles this)
-        return read_system_message(file_path)
-    except FileNotFoundError:
-         logger.error(f"System message file not found: {file_path}")
-         raise
-    except Exception as e:
-         logger.error(f"Error reading system message file {file_path}: {e}", exc_info=True)
-         raise # Re-raise other errors
+# Removed the local definition of _read_system_message
 
 def initialize_editable_prompts():
     """Loads default agent prompts into session state if they don't exist."""
     for agent_name, config in AGENT_CONFIG.items():
         if config["key"] not in st.session_state:
             try:
-                st.session_state[config["key"]] = _read_system_message(config["file"])
+                # Use the imported read_system_message directly
+                st.session_state[config["key"]] = read_system_message(config["file"])
                 logger.info(f"Loaded default system message for {agent_name} into session state ({config['key']}).")
             except Exception as e:
                 st.session_state[config["key"]] = f"Error loading default from {config['file']}: {e}"
@@ -175,7 +166,8 @@ def setup_chat(
                  logger.error(f"Missing system message content for agent {agent_name} in setup_chat call.")
                  # Fallback to reading file again as a safety measure, though it shouldn't happen if initialized correctly
                  try:
-                     system_message_content = _read_system_message(config["file"])
+                     # Use the imported read_system_message here as well
+                     system_message_content = read_system_message(config["file"])
                      logger.warning(f"Had to re-read {config['file']} for {agent_name} during setup.")
                  except Exception as e:
                      raise ValueError(f"Could not load system message for {agent_name}: {e}")
@@ -285,7 +277,8 @@ def display_messages(messages):
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
             if is_agent_message:
                  with st.chat_message("assistant", avatar="🤖"):
-                      st.markdown(f"""**{sender_name}:**\n{content}""")
+                      st.markdown(f"""**{sender_name}:**
+{content}""")
             else:
                  with st.chat_message("system", avatar="⚙️"):
                       st.markdown(f"""_{sender_name}: {content}_""")
@@ -548,7 +541,7 @@ if st.session_state.chat_initialized or st.session_state.error_message or not st
          # # Optional: Reset editable prompts to default (Uncomment if desired)
          # for agent_name, config in AGENT_CONFIG.items():
          #     try:
-         #         st.session_state[config["key"]] = _read_system_message(config["file"])
+         #         st.session_state[config["key"]] = read_system_message(config["file"]) # Use imported function
          #     except Exception as e:
          #         st.session_state[config["key"]] = f"Error reloading default from {config['file']}: {e}"
          #         logger.error(f"Failed to reload prompt for {agent_name} during reset: {e}")
