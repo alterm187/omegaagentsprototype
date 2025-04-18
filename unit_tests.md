@@ -36,31 +36,31 @@ Tests for helper functions managing agents, chat flow, and utilities.
 
 ### Custom Speaker Selection (`custom_speaker_selection`)
 
-*   **`test_custom_speaker_selection_initial`:** Verify `Boss` is selected when message history is empty.
+*   **`test_custom_speaker_selection_initial`:** Verify `ProductLead` is selected when message history is empty.
 *   **`test_custom_speaker_selection_mention_policyguard_last`:** Verify `PolicyGuard` is selected when mentioned last in the message.
-*   **`test_custom_speaker_selection_mention_challenger_last`:** Verify `FirstLineChallenger` is selected when mentioned last.
-*   **`test_custom_speaker_selection_mention_boss_last`:** Verify `Boss` is selected when mentioned last.
+*   **`test_custom_speaker_selection_mention_challenger_last`:** Verify `Challenger` is selected when mentioned last. # Updated name
+*   **`test_custom_speaker_selection_mention_productlead_last`:** Verify `ProductLead` is selected when mentioned last.
 *   **`test_custom_speaker_selection_multiple_mentions`:** Verify the *last* mentioned agent is selected if multiple agents are named.
-*   **`test_custom_speaker_selection_no_mentions`:** Verify `Boss` is selected when no agent names are found.
-*   **`test_custom_speaker_selection_mention_self`:** Verify `Boss` is selected if the last speaker mentions only themselves.
-*   **`test_custom_speaker_selection_terminate`:** Verify `Boss` is selected when the message ends with "TERMINATE".
-*   **`test_custom_speaker_selection_no_boss_agent`:** Verify the first agent is returned if no `UserProxyAgent` (Boss) is in the chat (and log error).
-*   **`test_custom_speaker_selection_error_accessing_message`:** Verify `Boss` is selected if there's an error reading the last message content.
+*   **`test_custom_speaker_selection_no_mentions`:** Verify `ProductLead` is selected when no agent names are found.
+*   **`test_custom_speaker_selection_mention_self`:** Verify `ProductLead` is selected if the last speaker mentions only themselves.
+*   **`test_custom_speaker_selection_terminate`:** Verify `ProductLead` is selected when the message ends with "TERMINATE".
+*   **`test_custom_speaker_selection_no_productlead_agent`:** Verify the first agent is returned if no `UserProxyAgent` (ProductLead) is in the chat (and log error).
+*   **`test_custom_speaker_selection_error_accessing_message`:** Verify `ProductLead` is selected if there's an error reading the last message content.
 
 ### Group Chat Setup (`create_groupchat`, `create_groupchat_manager`)
 
-*   **`test_create_groupchat_success`:** Ensure `GroupChat` object is created with the custom speaker selection function when valid agents (including Boss) are provided.
+*   **`test_create_groupchat_success`:** Ensure `GroupChat` object is created with the custom speaker selection function when valid agents (including ProductLead) are provided.
 *   **`test_create_groupchat_no_userproxy`:** Ensure `ValueError` is raised if no `UserProxyAgent` is included in the agent list.
 *   **`test_create_groupchat_manager_success`:** Ensure `GroupChatManager` is created with valid inputs.
 *   **`test_create_groupchat_manager_invalid_llm`:** Ensure `ValueError` is raised if the LLM config is invalid.
 
 ### Chat Flow (`initiate_chat_task`, `run_agent_step`, `send_user_message`)
 
-*   **`test_initiate_chat_task_success`:** Verify history reset, correct initial message addition (from Boss), and `PolicyGuard` as the first speaker.
+*   **`test_initiate_chat_task_success`:** Verify history reset, correct initial message addition (from ProductLead), and `PolicyGuard` as the first speaker.
 *   **`test_initiate_chat_task_no_policyguard`:** Verify speaker selection fallback works if `PolicyGuard` isn't found initially.
 *   **`test_run_agent_step_framework_adds_message`:** Test agent step where AutoGen automatically adds the message to history. Verify correct new messages and next speaker returned.
 *   **`test_run_agent_step_manual_add_message`:** Test agent step where AutoGen *doesn't* add the message. Verify manual addition works and correct messages/speaker are returned.
 *   **`test_run_agent_step_no_reply`:** Test agent step where agent returns `None`. Verify no message is added, empty list returned, and next speaker is selected.
-*   **`test_run_agent_step_error`:** Test agent step where `generate_reply` raises an error. Verify error handling, empty list returned, and `Boss` selected next.
+*   **`test_run_agent_step_error`:** Test agent step where `generate_reply` raises an error. Verify error handling, empty list returned, and `ProductLead` selected next.
 *   **`test_send_user_message_success`:** Verify user message is correctly added to history and correct message/speaker are returned.
 *   **`test_send_user_message_empty`:** Verify empty user messages are ignored (not added to history), empty list returned, and next speaker is selected.

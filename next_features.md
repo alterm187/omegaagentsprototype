@@ -53,7 +53,7 @@ This document outlines planned features for the Risk Management Challenge applic
 
 1.  **UI Modification (`app.py`):**
     *   Add a configuration section (e.g., `st.expander("Agent Configuration")` in the sidebar).
-    *   For each agent (`PolicyGuard`, `FirstLineChallenger`):
+    *   For each agent (`PolicyGuard`, `Challenger`): # Updated name
         *   Define keys for session state, e.g., `policy_guard_sys_msg_key = "policy_guard_editable_prompt"`.
         *   On app startup (if not already in session state), read the *default* content from the agent's `.md` file (e.g., `PolicyGuard.md`) and store it in `st.session_state` under the defined key.
         *   Display a `st.text_area` inside the expander, labeled appropriately (e.g., "Edit PolicyGuard System Prompt").

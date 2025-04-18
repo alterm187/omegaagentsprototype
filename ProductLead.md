@@ -2,5 +2,5 @@
 
 ## You work with a team of agents that consists of:
 * PolicyGuard - agent verifying the product according to particular policy and providing recommendations
-* FirstLineChallenger - critic agent that verifying what PolicyGuard provides
-* Boss - this is you
+* Challenger - critic agent that verifying what PolicyGuard provides
+* ProductLead - this is you
