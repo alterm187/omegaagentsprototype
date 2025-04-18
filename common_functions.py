@@ -83,16 +83,16 @@ def create_agent(
 def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent:
     """
     Selects the next speaker based on the *last* mention in the last message.
-    Defaults to Boss if no specific mention is found or on error.
+    Defaults to ProductLead if no specific mention is found or on error.
     """
     logger.debug(f"--- Entering custom_speaker_selection ---")
     logger.debug(f"Last speaker: {last_speaker.name if last_speaker else 'None'}")
     logger.debug(f"Available agents: {[a.name for a in groupchat.agents]}")
 
-    boss_agent = next((agent for agent in groupchat.agents if isinstance(agent, UserProxyAgent)), None)
-    if not boss_agent:
-        logger.error("No UserProxyAgent (Boss) found in custom_speaker_selection!")
-        logger.debug("Selecting first agent as fallback (Boss not found).")
+    product_lead_agent = next((agent for agent in groupchat.agents if isinstance(agent, UserProxyAgent)), None)
+    if not product_lead_agent:
+        logger.error("No UserProxyAgent (ProductLead) found in custom_speaker_selection!")
+        logger.debug("Selecting first agent as fallback (ProductLead not found).")
         # Ensure groupchat.agents is not empty before accessing index 0
         if not groupchat.agents:
              logger.critical("Groupchat has no agents!")
@@ -100,9 +100,9 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
         return groupchat.agents[0]
 
     if not groupchat.messages:
-        logger.info("No messages yet, selecting Boss by default.")
+        logger.info("No messages yet, selecting ProductLead by default.")
         logger.debug(f"--- Exiting custom_speaker_selection (No messages) ---")
-        return boss_agent
+        return product_lead_agent
 
     last_message = None
     message_content = ''
@@ -122,20 +122,20 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
         logger.debug(f"Extracted message content for selection check: '{message_content[:100]}...'" + ('...' if len(message_content) > 100 else ''))
 
         if message_content.rstrip().endswith("TERMINATE"):
-            logger.info("Termination message detected. Selecting Boss for final step.")
+            logger.info("Termination message detected. Selecting ProductLead for final step.")
             logger.debug(f"--- Exiting custom_speaker_selection (Terminate) ---")
-            return boss_agent
+            return product_lead_agent
 
     except (AttributeError, IndexError, KeyError) as e:
-        logger.warning(f"Error accessing last message content ({e}), defaulting to Boss")
+        logger.warning(f"Error accessing last message content ({e}), defaulting to ProductLead")
         logger.debug(f"--- Exiting custom_speaker_selection (Error accessing message) ---")
-        return boss_agent
+        return product_lead_agent
 
     # --- Agent Mention Logic (Prioritize Last Mention) ---
     agent_patterns = {
         "PolicyGuard": ["PolicyGuard"],
-        "FirstLineChallenger": ["FirstLineChallenger"],
-        "Boss": ["Boss"]
+        "Challenger": ["Challenger"], # Updated name
+        "ProductLead": ["ProductLead"]
     }
 
     lower_message_content = message_content.lower()
@@ -171,21 +171,21 @@ def custom_speaker_selection(last_speaker: Agent, groupchat: GroupChat) -> Agent
         logger.debug(f"--- Exiting custom_speaker_selection (Last Mention found) ---")
         return next_speaker
     elif agent_to_select and agent_to_select == last_speaker:
-         # The only agent mentioned last was the speaker themself. Default to Boss.
-         logger.info(f"Last mentioned agent was the speaker ({last_speaker.name}). Defaulting to Boss.")
+         # The only agent mentioned last was the speaker themself. Default to ProductLead.
+         logger.info(f"Last mentioned agent was the speaker ({last_speaker.name}). Defaulting to ProductLead.")
          logger.debug(f"--- Exiting custom_speaker_selection (Self-mention default) ---")
-         return boss_agent
+         return product_lead_agent
     else:
-        # No mentions found at all. Default to Boss.
-        logger.info(f"No specific next agent mentioned. Defaulting to Boss.")
-        logger.debug(f"--- Exiting custom_speaker_selection (Defaulting to Boss) ---")
-        return boss_agent
+        # No mentions found at all. Default to ProductLead.
+        logger.info(f"No specific next agent mentioned. Defaulting to ProductLead.")
+        logger.debug(f"--- Exiting custom_speaker_selection (Defaulting to ProductLead) ---")
+        return product_lead_agent
 
 
 def create_groupchat(agents: Sequence[Agent], max_round: int = 50) -> GroupChat:
      """Creates a GroupChat object using the custom speaker selection."""
      if not any(isinstance(agent, UserProxyAgent) for agent in agents):
-         raise ValueError("GroupChat requires at least one UserProxyAgent (like 'Boss').")
+         raise ValueError("GroupChat requires at least one UserProxyAgent (like 'ProductLead').")
 
      return GroupChat(
          agents=list(agents),
@@ -210,12 +210,12 @@ def create_groupchat_manager(groupchat: GroupChat, llm_config: LLMConfiguration)
 
 # --- Updated Chat Initiation (Fixed - Adds initial message to history) ---
 def initiate_chat_task(
-    user_agent: UserProxyAgent, # This is the 'Boss' agent
+    user_agent: UserProxyAgent, # This is the 'ProductLead' agent
     manager: GroupChatManager,
     initial_prompt: str
     ) -> Tuple[List[Dict], Optional[Agent]]:
     """
-    Initiates the chat: resets history, adds the first message from Boss to the
+    Initiates the chat: resets history, adds the first message from ProductLead to the
     manager's groupchat history, and sets the first speaker.
     Returns the initial message list (for display) and the next speaker.
     """
@@ -350,15 +350,15 @@ def run_agent_step(
     except Exception as e:
         logger.error(f"Error during agent step for {speaker.name}: {e}", exc_info=True)
         try:
-            boss_agent = next((agent for agent in manager.groupchat.agents if isinstance(agent, UserProxyAgent)), None)
-            if boss_agent:
-                 next_speaker = boss_agent
-                 logger.info(f"Error occurred. Defaulting next speaker to Boss: {next_speaker.name}")
+            product_lead_agent = next((agent for agent in manager.groupchat.agents if isinstance(agent, UserProxyAgent)), None)
+            if product_lead_agent:
+                 next_speaker = product_lead_agent
+                 logger.info(f"Error occurred. Defaulting next speaker to ProductLead: {next_speaker.name}")
             else:
-                 logger.error("Boss agent not found! Cannot default next speaker on error.")
+                 logger.error("ProductLead agent not found! Cannot default next speaker on error.")
                  next_speaker = None
         except Exception as fallback_e:
-            logger.error(f"Failed to fallback to Boss agent after error: {fallback_e}")
+            logger.error(f"Failed to fallback to ProductLead agent after error: {fallback_e}")
             next_speaker = None
 
     return newly_added_messages, next_speaker
@@ -367,11 +367,11 @@ def run_agent_step(
 # --- User Message Sending (Revised to align with run_agent_step/manual add - No changes needed here) ---
 def send_user_message(
     manager: GroupChatManager,
-    user_agent: UserProxyAgent, # Boss agent
+    user_agent: UserProxyAgent, # ProductLead agent
     user_message: str
     ) -> Tuple[List[Dict], Optional[Agent]]:
     """
-    Handles sending a message from the user (Boss) into the chat.
+    Handles sending a message from the user (ProductLead) into the chat.
     Manually constructs and adds the message to the groupchat history.
     Returns the message added and the next speaker determined by the selection method.
     """

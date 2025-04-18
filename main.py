@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 # --- Constants ---
 # Define agent names and system message file paths
-BOSS_NAME = "Boss"
+PRODUCT_LEAD_NAME = "ProductLead"
 POLICY_GUARD_NAME = "PolicyGuard"
-CHALLENGER_NAME = "FirstLineChallenger"
+CHALLENGER_NAME = "Challenger" # Updated name
 
-BOSS_SYS_MSG_FILE = "Boss.md"
+PRODUCT_LEAD_SYS_MSG_FILE = "ProductLead.md"
 POLICY_GUARD_SYS_MSG_FILE = "PolicyGuard.md"
-CHALLENGER_SYS_MSG_FILE = "FirstLineChallenger.md"
+CHALLENGER_SYS_MSG_FILE = "Challenger.md" # Updated file path
 
 # Marker for policy injection
 POLICY_INJECTION_MARKER = "## Policies"
@@ -73,7 +73,7 @@ def setup_chat(
         policy_text (Optional[str]): The policy text provided by the user.
 
     Returns:
-        Tuple[GroupChatManager, UserProxyAgent]: The configured GroupChatManager and the Boss agent.
+        Tuple[GroupChatManager, UserProxyAgent]: The configured GroupChatManager and the ProductLead agent.
 
     Raises:
         FileNotFoundError: If agent system message files are not found.
@@ -130,7 +130,7 @@ def setup_chat(
     # --- Agent Creation ---
     try:
         # Ensure non-PolicyGuard system message files exist
-        for file_path in [BOSS_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE]: # Read policy guard file for base
+        for file_path in [PRODUCT_LEAD_SYS_MSG_FILE, CHALLENGER_SYS_MSG_FILE, POLICY_GUARD_SYS_MSG_FILE]: # Read policy guard file for base
             if not os.path.exists(file_path):
                 # Try alternative path check using helper's logic (though helper will raise if needed)
                 script_dir = os.path.dirname(__file__)
@@ -138,11 +138,11 @@ def setup_chat(
                 if not os.path.exists(alt_path):
                     raise FileNotFoundError(f"Agent system message file not found: {file_path}")
 
-        # --- Create Boss Agent (using file) ---
-        boss = create_agent(
-            name=BOSS_NAME,
+        # --- Create ProductLead Agent (using file) ---
+        product_lead = create_agent(
+            name=PRODUCT_LEAD_NAME,
             llm_config=llm_config,
-            system_message_file=BOSS_SYS_MSG_FILE, # Reads from file
+            system_message_file=PRODUCT_LEAD_SYS_MSG_FILE, # Reads from file
             agent_type="user_proxy",
         )
 
@@ -181,12 +181,12 @@ def setup_chat(
 
         # --- Create Challenger Agent (using file) ---
         # Load system message for Challenger (example using session state if needed for future features)
-        # first_line_challenger_sys_msg = st.session_state.get("first_line_challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE))
-        first_line_challenger = create_agent(
+        # challenger_sys_msg = st.session_state.get("challenger_sys_msg", _read_system_message(CHALLENGER_SYS_MSG_FILE)) # Updated variable name
+        challenger = create_agent( # Updated variable name
             name=CHALLENGER_NAME,
             llm_config=llm_config,
-            system_message_file=CHALLENGER_SYS_MSG_FILE, # Reads from file
-            # system_message_content=first_line_challenger_sys_msg # Or use content if implementing editable prompts feature
+            system_message_file=CHALLENGER_SYS_MSG_FILE, # Reads from file (updated constant)
+            # system_message_content=challenger_sys_msg # Or use content if implementing editable prompts feature
         )
 
         logger.info("Agents created successfully.")
@@ -201,7 +201,7 @@ def setup_chat(
         raise
 
     # --- Group Chat Setup ---
-    policy_team = [boss, policy_guard, first_line_challenger]
+    policy_team = [product_lead, policy_guard, challenger] # Updated list with new variable name
     try:
         groupchat = create_groupchat(policy_team, max_round=50)
         logger.info("GroupChat created successfully.")
@@ -224,7 +224,7 @@ def setup_chat(
         raise
 
     logger.info("Chat setup completed.")
-    return manager, boss
+    return manager, product_lead
 
 
 # The main execution block IS NOW PRIMARILY FOR LOCAL TESTING (if possible).
@@ -240,22 +240,22 @@ if __name__ == "__main__":
         print("Attempting to set up chat via setup_chat() locally...")
         # WARNING: This call will likely fail if setup_chat() tries to access st.secrets
         # Pass the test policy text here for local execution
-        test_manager, test_boss_agent = setup_chat(policy_text=test_policy) # Example: Call setup_chat with test policy
+        test_manager, test_product_lead_agent = setup_chat(policy_text=test_policy) # Example: Call setup_chat with test policy
         print("-" * 20)
         print("Local setup successful (if st.secrets wasn't required).")
         print(f"  Manager Name: {test_manager.name}")
-        print(f"  Boss Agent Name: {test_boss_agent.name}")
+        print(f"  ProductLead Agent Name: {test_product_lead_agent.name}")
         print(f"  Team Agents: {[agent.name for agent in test_manager.groupchat.agents]}")
         # You could inspect the PolicyGuard's system message if setup succeeded
         # policy_guard_agent = next((a for a in test_manager.groupchat.agents if a.name == POLICY_GUARD_NAME), None)
         # if policy_guard_agent:
-        #     print("\nPolicyGuard System Message (First 200 chars):")
+        #     print("PolicyGuard System Message (First 200 chars):")
         #     print(policy_guard_agent.system_message[:200] + "...")
         print("-" * 20)
         # You could add a simple initiation test here too, IF setup succeeded:
         # print("Attempting to initiate chat task (Testing purposes)...")
         # test_initial_prompt = "This is a local test task description." # Don't include policy here
-        # initial_messages, next_agent = initiate_chat_task(test_boss_agent, test_manager, test_initial_prompt)
+        # initial_messages, next_agent = initiate_chat_task(test_product_lead_agent, test_manager, test_initial_prompt)
         # print("Chat initiated for testing.")
         # print(f"Initial messages count: {len(initial_messages)}")
         # print(f"First message content: {initial_messages[0]['content']}")
@@ -263,20 +263,20 @@ if __name__ == "__main__":
         # print("-" * 20)
 
     except FileNotFoundError as e:
-        print(f"\n*** LOCAL SETUP FAILED: File Not Found. ***")
+        print(f"*** LOCAL SETUP FAILED: File Not Found. ***")
         print(f"    Error details: {e}")
     except (ValueError, KeyError) as e:
         # This will likely catch the 'st.secrets not found' error when run locally
-        print(f"\n*** LOCAL SETUP FAILED: Configuration, Value, or Key Error. ***")
+        print(f"*** LOCAL SETUP FAILED: Configuration, Value, or Key Error. ***")
         print(f"    Error details: {e}")
         print(f"    (This might be expected if running locally and setup requires st.secrets)")
     except Exception as e:
         # Catch any other unexpected errors during setup test
-        print(f"\n*** UNEXPECTED LOCAL SETUP FAILED ***")
+        print(f"*** UNEXPECTED LOCAL SETUP FAILED ***")
         print(f"    Error type: {type(e).__name__}")
         print(f"    Error details: {e}")
         # import traceback
         # traceback.print_exc()
 
-    print("\nmain.py local execution attempt finished.")
+    print("main.py local execution attempt finished.")
     # The script will now exit. Run 'streamlit run app.py' for the full application.

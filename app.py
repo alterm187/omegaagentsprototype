@@ -27,13 +27,13 @@ logger = logging.getLogger(__name__)
 
 # --- Constants ---
 
-BOSS_NAME = "Boss"
+PRODUCT_LEAD_NAME = "ProductLead"
 POLICY_GUARD_NAME = "PolicyGuard"
-CHALLENGER_NAME = "FirstLineChallenger"
+CHALLENGER_NAME = "Challenger" # Updated name
 
-BOSS_SYS_MSG_FILE = "Boss.md"
+PRODUCT_LEAD_SYS_MSG_FILE = "ProductLead.md"
 POLICY_GUARD_SYS_MSG_FILE = "PolicyGuard.md"
-CHALLENGER_SYS_MSG_FILE = "FirstLineChallenger.md"
+CHALLENGER_SYS_MSG_FILE = "Challenger.md" # Updated file path
 
 # Marker for policy injection
 POLICY_INJECTION_MARKER = "## Policies"
@@ -45,12 +45,12 @@ TASK_PROMPT_KEY = "initial_prompt_input" # Key for the task description area
 # Keys for editable system messages
 POLICY_GUARD_EDIT_KEY = "policy_guard_editable_prompt"
 CHALLENGER_EDIT_KEY = "challenger_editable_prompt"
-BOSS_EDIT_KEY = "boss_editable_prompt"
+PRODUCT_LEAD_EDIT_KEY = "product_lead_editable_prompt"
 
 AGENT_CONFIG = {
     POLICY_GUARD_NAME: {"file": POLICY_GUARD_SYS_MSG_FILE, "key": POLICY_GUARD_EDIT_KEY},
     CHALLENGER_NAME: {"file": CHALLENGER_SYS_MSG_FILE, "key": CHALLENGER_EDIT_KEY},
-    BOSS_NAME: {"file": BOSS_SYS_MSG_FILE, "key": BOSS_EDIT_KEY},
+    PRODUCT_LEAD_NAME: {"file": PRODUCT_LEAD_SYS_MSG_FILE, "key": PRODUCT_LEAD_EDIT_KEY},
 }
 
 # Feature 4: Context Limit for Gemini Pro 1.5 (approximate)
@@ -91,17 +91,17 @@ def update_token_warning():
     policy_text = st.session_state.get(POLICY_TEXT_KEY, "")
     task_text = st.session_state.get(TASK_PROMPT_KEY, "")
     policy_guard_prompt = st.session_state.get(POLICY_GUARD_EDIT_KEY, "")
-    challenger_prompt = st.session_state.get(CHALLENGER_EDIT_KEY, "")
-    boss_prompt = st.session_state.get(BOSS_EDIT_KEY, "")
+    challenger_prompt = st.session_state.get(CHALLENGER_EDIT_KEY, "") # Key uses updated constant
+    product_lead_prompt = st.session_state.get(PRODUCT_LEAD_EDIT_KEY, "")
 
     # Estimate tokens for each part
     policy_tokens = estimate_tokens(policy_text)
     task_tokens = estimate_tokens(task_text)
     policy_guard_tokens = estimate_tokens(policy_guard_prompt)
     challenger_tokens = estimate_tokens(challenger_prompt)
-    boss_tokens = estimate_tokens(boss_prompt)
+    product_lead_tokens = estimate_tokens(product_lead_prompt)
 
-    total_system_prompt_tokens = policy_guard_tokens + challenger_tokens + boss_tokens
+    total_system_prompt_tokens = policy_guard_tokens + challenger_tokens + product_lead_tokens
     total_input_tokens = policy_tokens + task_tokens
     total_estimated_tokens = total_input_tokens + total_system_prompt_tokens
 
@@ -200,7 +200,7 @@ def setup_chat(
 
 {policy_text.strip()}"""
 
-            agent_type = "user_proxy" if agent_name == BOSS_NAME else "assistant"
+            agent_type = "user_proxy" if agent_name == PRODUCT_LEAD_NAME else "assistant"
             agents[agent_name] = create_agent(
                 name=agent_name,
                 llm_config=llm_config,
@@ -209,9 +209,9 @@ def setup_chat(
                 agent_type=agent_type,
             )
 
-        boss = agents[BOSS_NAME]
+        product_lead = agents[PRODUCT_LEAD_NAME]
         policy_guard = agents[POLICY_GUARD_NAME]
-        first_line_challenger = agents[CHALLENGER_NAME]
+        challenger = agents[CHALLENGER_NAME] # Updated variable name
 
         logger.info("Agents created successfully using session state prompts.")
     except FileNotFoundError as e:
@@ -226,7 +226,7 @@ def setup_chat(
 
     # --- Group Chat Setup ---
 
-    policy_team = [boss, policy_guard, first_line_challenger]
+    policy_team = [product_lead, policy_guard, challenger] # Updated list with new variable name
     try:
         groupchat = create_groupchat(policy_team, max_round=50)
         logger.info("GroupChat created successfully.")
@@ -249,7 +249,7 @@ def setup_chat(
         raise
 
     logger.info("Chat setup completed.")
-    return manager, boss
+    return manager, product_lead
 
 def display_messages(messages):
     """Displays chat messages, limiting the number shown."""
@@ -278,8 +278,8 @@ def display_messages(messages):
         elif not isinstance(content, str):
              content = str(content)
 
-        if sender_name == BOSS_NAME:
-            with st.chat_message("Boss", avatar="🧑"):
+        if sender_name == PRODUCT_LEAD_NAME:
+            with st.chat_message("ProductLead", avatar="🧑"):
                  st.markdown(f"""**{sender_name}:**\n{content}""")
         else:
             is_agent_message = "sender" in msg or ("role" in msg and msg["role"] not in ["system", "tool", "function"])
@@ -302,7 +302,7 @@ config_path = "config.json" # Example placeholder path
 
 # --- Streamlit App UI ---
 
-st.title("🤖 Risk Management Challenge Session with ProductLead and two AI agents")
+st.title("🤖 Risk Management Challenge Session with ProductLead and two AI roles")
 
 # --- Initialization ---
 
@@ -312,7 +312,7 @@ default_values = {
     "error_message": None,
     "config": None,
     "manager": None,
-    "boss_agent": None,
+    "product_lead_agent": None,
     "messages": [],
     "next_agent": None,
     TASK_PROMPT_KEY: "",
@@ -343,7 +343,7 @@ if not st.session_state.config:
 if not st.session_state.manager and st.session_state.config:
      # Show a placeholder or indicator that setup will happen on start
      st.sidebar.info("Agents will be configured when chat starts.")
-     pass # Don't set up manager/boss here yet
+     pass # Don't set up manager/product_lead here yet
 
 # --- Agent Configuration Expander (Sidebar) ---
 
@@ -408,7 +408,7 @@ if st.sidebar.button("🚀 Start Chat", key="start_chat",
                     current_agent_prompts[agent_name] = st.session_state.get(config_info["key"], f"Error: Missing prompt for {agent_name}")
 
                 # Setup chat using current prompts and policy
-                st.session_state.manager, st.session_state.boss_agent = setup_chat(
+                st.session_state.manager, st.session_state.product_lead_agent = setup_chat(
                     llm_provider=st.session_state.config.get("llm_provider", VERTEX_AI),
                     model_name=st.session_state.config.get("model_name", "gemini-1.5-pro-002"),
                     policy_text=st.session_state.get(POLICY_TEXT_KEY, ""), # Use current policy text
@@ -417,7 +417,7 @@ if st.sidebar.button("🚀 Start Chat", key="start_chat",
                 logger.info("Setup complete. Initiating chat task...")
 
                 initial_messages, next_agent = initiate_chat_task(
-                    st.session_state.boss_agent,
+                    st.session_state.product_lead_agent,
                     st.session_state.manager,
                     task_prompt
                 )
@@ -430,9 +430,9 @@ if st.sidebar.button("🚀 Start Chat", key="start_chat",
             logger.error(f"Error setting up or initiating chat task: {traceback.format_exc()}")
             st.session_state.error_message = f"Setup/Initiation failed: {e}"
             st.session_state.chat_initialized = False
-            # Reset manager/boss if setup failed
+            # Reset manager/product_lead if setup failed
             st.session_state.manager = None
-            st.session_state.boss_agent = None
+            st.session_state.product_lead_agent = None
         finally:
             st.session_state.processing = False
         st.rerun()
@@ -453,10 +453,10 @@ with chat_container:
         if st.session_state.next_agent and not st.session_state.processing:
             next_agent_name = st.session_state.next_agent.name
 
-            if next_agent_name == BOSS_NAME:
-                st.markdown(f"**Your turn (as {BOSS_NAME}):**")
+            if next_agent_name == PRODUCT_LEAD_NAME:
+                st.markdown(f"**Your turn (as {PRODUCT_LEAD_NAME}):**")
                 # Use a unique key based on message length to avoid state issues on rerun
-                form_key = f'boss_input_form_{len(st.session_state.messages)}'
+                form_key = f'product_lead_input_form_{len(st.session_state.messages)}'
                 input_key = f"user_input_{len(st.session_state.messages)}"
 
                 with st.form(key=form_key):
@@ -478,12 +478,12 @@ with chat_container:
                             st.session_state.processing = True
                             st.session_state.error_message = None
                             should_rerun = False
-                            with st.spinner(f"Sending message as {BOSS_NAME}..."):
+                            with st.spinner(f"Sending message as {PRODUCT_LEAD_NAME}..."):
                                 try:
                                     logger.info(f"Sending user message: {user_input}")
                                     new_messages, next_agent = send_user_message(
                                         st.session_state.manager,
-                                        st.session_state.boss_agent,
+                                        st.session_state.product_lead_agent,
                                         user_input
                                     )
                                     st.session_state.messages.extend(new_messages)
@@ -539,7 +539,7 @@ if st.session_state.chat_initialized or st.session_state.error_message or not st
          st.session_state.messages = []
          st.session_state.next_agent = None
          st.session_state.manager = None
-         st.session_state.boss_agent = None
+         st.session_state.product_lead_agent = None
 
          # Clear inputs *but keep editable prompts*
          st.session_state[TASK_PROMPT_KEY] = ""
@@ -557,4 +557,3 @@ if st.session_state.chat_initialized or st.session_state.error_message or not st
          # Also manually trigger token update on reset
          update_token_warning()
          st.rerun()
-

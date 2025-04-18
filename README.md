@@ -1,8 +1,8 @@
-# Project: Prototype Application with PolicyGuard and FirstLineChallenger
+# Project: Prototype Application with PolicyGuard and Challenger
 
 This project is a prototype application of a groupchat based on AutoGen framework. The idea is to have PolicyGuard agent with set of policies attached to be followed and instructed how it should analyze if the given product description (provided with the task) is matching the policy or how to make it matching.
 
-The second agent, FirstLineChallenger, is instructed how to challenge the analysis and recommendations provided by PolicyGuard. Boss agent is user proxy allowing human to participate in the discussion.
+The second agent, Challenger, is instructed how to challenge the analysis and recommendations provided by PolicyGuard. ProductLead agent is user proxy allowing human to participate in the discussion.
 
 
 ## LLM Integration and Setup
@@ -26,6 +26,6 @@ This application builds upon a previous project that included additional agent t
 
 1.  A `groupchat` is initialized with a specific task describing a product or product concept that is supposed to be a subject of agents' discussion.
 2.  Designated agents are assigned to handle the task within the groupchat.
-3. System messages for `PolicyGuard` and `FirstLineChallenger` need to be rewritten and adapted for this application.
+3. System messages for `PolicyGuard` and `Challenger` need to be rewritten and adapted for this application.
 
 
